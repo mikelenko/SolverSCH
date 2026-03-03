@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "solver_sch"
+version = "0.1.0"
+description = "Autonomous EDA Designer and MNA Solver"
+authors = [{name = "The SolverSCH Team"}]
+dependencies = [
+    "pyvis",
+    "networkx",
+    "numpy",
+    "pytest",
+    "google-genai",
+    "scipy",
+    "plotly"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/solver_sch"]

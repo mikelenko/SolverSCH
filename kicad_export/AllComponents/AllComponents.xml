@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<export version="D">
+  <design>
+    <source>C:\Users\micha\Desktop\SolverSCH\scripts\export_all_components.py</source>
+    <date>03/03/2026 08:55 PM</date>
+    <tool>SKiDL (2.2.1)</tool>
+  </design>
+  <components>
+    <comp ref="R1">
+      <value>"100"</value>
+      <footprint>Resistor_SMD:R_0805_2012Metric</footprint>
+      <libsource lib="Device" part=""R_Small""/>
+    </comp>
+    <comp ref="L1">
+      <value>"0.001"</value>
+      <footprint>Inductor_SMD:L_0805_2012Metric</footprint>
+      <libsource lib="Device" part=""L_Small""/>
+    </comp>
+    <comp ref="C1">
+      <value>"1e-06"</value>
+      <footprint>Capacitor_SMD:C_0805_2012Metric</footprint>
+      <libsource lib="Device" part=""C_Small""/>
+    </comp>
+    <comp ref="U1">
+      <value>"LM358"</value>
+      <footprint>Package_SO:SOIC-8_3.9x4.9mm_P1.27mm</footprint>
+      <libsource lib="Amplifier_Operational" part=""LM358""/>
+    </comp>
+  </components>
+  <nets>
+    <net code="0" name="GND">
+      <node ref="C1" pin="2"/>
+    </net>
+    <net code="1" name="in">
+      <node ref="R1" pin="1"/>
+    </net>
+    <net code="2" name="node_l">
+      <node ref="L1" pin="1"/>
+      <node ref="R1" pin="2"/>
+    </net>
+    <net code="3" name="node_c">
+      <node ref="L1" pin="2"/>
+      <node ref="U1" pin="3"/>
+      <node ref="C1" pin="1"/>
+    </net>
+    <net code="4" name="out">
+      <node ref="U1" pin="1"/>
+      <node ref="U1" pin="2"/>
+    </net>
+  </nets>
+</export>

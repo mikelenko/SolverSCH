@@ -1,0 +1,10 @@
+* LTspice Export: OpAmp_LPF_Gain4
+VVCC vcc 0 15.0
+VVEE vee 0 -15.0
+RRin gain_node 0 1000.0
+RRf gain_node amp_out 3000.0
+RRfilter amp_out out 10000.0
+.model NPN_MODEL NPN(Bf=100)
+.tran 10n
+.save V(out)
+.end

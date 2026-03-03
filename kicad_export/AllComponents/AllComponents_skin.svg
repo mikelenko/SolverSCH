@@ -1,0 +1,207 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     xmlns:s="https://github.com/nturley/netlistsvg">
+  <s:properties
+    constants="false"
+    splitsAndJoins="false"
+    genericsLaterals="true">
+    <s:layoutEngine 
+                org.eclipse.elk.layered.spacing.nodeNodeBetweenLayers="5"
+                org.eclipse.elk.layered.compaction.postCompaction.strategy="4"
+                org.eclipse.elk.spacing.nodeNode="50"
+                org.eclipse.elk.direction="DOWN"
+             />
+  </s:properties>
+<style>
+svg {
+  stroke: #000;
+  fill: none;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+text {
+  fill: #000;
+  stroke: none;
+  font-size: 10px;
+  font-weight: bold;
+  font-family: "Courier New", monospace;
+}
+.skidl_text {
+  fill: #999;
+  stroke: none;
+  font-weight: bold;
+  font-family: consolas, "Courier New", monospace;
+}
+.pin_num_text {
+    fill: #840000;
+}
+.pin_name_text {
+    fill: #008484;
+}
+.net_name_text {
+    font-style: italic;
+    fill: #840084;
+}
+.part_text {
+    fill: #840000;
+}
+.part_ref_text {
+    fill: #008484;
+}
+.part_name_text {
+    fill: #008484;
+}
+.pen_fill {
+    fill: #840000;
+}
+.background_fill {
+    fill: #FFFFC2
+}
+.nodelabel {
+  text-anchor: middle;
+}
+.inputPortLabel {
+  text-anchor: end;
+}
+.splitjoinBody {
+  fill: #000;
+}
+.symbol {
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  stroke: #840000;
+}
+.detail {
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  fill: #000;
+}
+</style>
+
+<!-- signal -->
+<g s:type="inputExt" s:width="30" s:height="20" transform="translate(0,0)">
+  <text x="-2" y="12" text-anchor='end' class="$cell_id pin_name_text" s:attribute="ref">input</text>
+  <s:alias val="$_inputExt_"/>
+  <path d="M0,0 V20 H15 L30,10 15,0 Z" class="$cell_id symbol"/>
+  <g s:x="30" s:y="10" s:pid="Y" s:position="right"/>
+</g>
+
+<g s:type="outputExt" s:width="30" s:height="20" transform="translate(0,0)">
+  <text x="32" y="12" class="$cell_id pin_name_text" s:attribute="ref">output</text>
+  <s:alias val="$_outputExt_"/>
+  <path d="M30,0 V20 H15 L0,10 15,0 Z" class="$cell_id symbol"/>
+  <g s:x="0" s:y="10" s:pid="A" s:position="left"/>
+</g>
+<!-- signal -->
+
+<!-- builtin -->
+<g s:type="generic" s:width="30" s:height="40" transform="translate(0,0)">
+  <text x="15" y="-4" class="nodelabel $cell_id" s:attribute="ref">generic</text>
+  <rect width="30" height="40" x="0" y="0" s:generic="body" class="$cell_id"/>
+  <g transform="translate(30,10)"
+     s:x="30" s:y="10" s:pid="out0" s:position="right">
+    <text x="5" y="-4" class="$cell_id">out0</text>
+  </g>
+  <g transform="translate(30,30)"
+     s:x="30" s:y="30" s:pid="out1" s:position="right">
+    <text x="5" y="-4" class="$cell_id">out1</text>
+  </g>
+  <g transform="translate(0,10)"
+     s:x="0" s:y="10" s:pid="in0" s:position="left">
+      <text x="-3" y="-4" class="inputPortLabel $cell_id">in0</text>
+  </g>
+  <g transform="translate(0,30)"
+     s:x="0" s:y="30" s:pid="in1" s:position="left">
+    <text x="-3" y="-4" class="inputPortLabel $cell_id">in1</text>
+  </g>
+</g>
+<!-- builtin -->
+<g s:type="R_Small_1_" s:width="28.042" s:height="75.590" transform="translate(-0.000 0.000)" >
+<s:alias val="R_Small_1_"/>
+<rect x="0.000" y="7.315" width="14.630" height="34.138" style="stroke-width:1.951" class="$cell_id symbol none" /><polyline points="7.315,0.000 7.315,7.315" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="7.315" y="7.315" transform="rotate(-90 7.315 7.315)" style="font-size:12.192" dominant-baseline=""        text-anchor="start">&#8201;&#8201;1</text>
+<text class="pin_name_text" x="7.315" y="7.315" transform="rotate(-90 7.315 7.315)" style="font-size:12.192" dominant-baseline="central" text-anchor="end">~&#8201;&#8201;</text>
+<g s:x="7.315" s:y="0.000" s:pid="1" s:position="top"/>
+<polyline points="7.315,48.768 7.315,41.453" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="7.315" y="41.453" transform="rotate(-90 7.315 41.453)" style="font-size:12.192" dominant-baseline=""        text-anchor="end">2&#8201;&#8201;</text>
+<text class="pin_name_text" x="7.315" y="41.453" transform="rotate(-90 7.315 41.453)" style="font-size:12.192" dominant-baseline="central" text-anchor="start">&#8201;&#8201;~</text>
+<g s:x="7.315" s:y="48.768" s:pid="2" s:position="bottom"/>
+<text class="part_ref_text" x="7.315" y="24.384" transform="rotate(-90 7.315 24.384)" style="font-size:9.754" dominant-baseline="central" text-anchor="end"   s:attribute="ref">R</text>
+<text class="part_name_text" x="24.384" y="24.384" transform="rotate(-90 24.384 24.384)" style="font-size:12.192" dominant-baseline="central" text-anchor="end"   s:attribute="value">R_Small</text>
+</g>
+
+<g s:type="L_Small_1_" s:width="62.179" s:height="48.768" transform="translate(0.000 0.000)" >
+<s:alias val="L_Small_1_"/>
+<path d="M 3.658 4.877 A 4.877 4.877 0 0 1 3.658 14.630" style="stroke-width:0.960" class="$cell_id symbol none" /><path d="M 3.658 14.630 A 4.877 4.877 0 0 1 3.658 24.384" style="stroke-width:0.960" class="$cell_id symbol none" /><path d="M 3.658 24.384 A 4.877 4.877 0 0 1 3.658 34.138" style="stroke-width:0.960" class="$cell_id symbol none" /><path d="M 3.658 34.138 A 4.877 4.877 0 0 1 3.658 43.891" style="stroke-width:0.960" class="$cell_id symbol none" /><polyline points="3.658,0.000 3.658,4.877" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="3.658" y="4.877" transform="rotate(-90 3.658 4.877)" style="font-size:12.192" dominant-baseline=""        text-anchor="start">&#8201;&#8201;1</text>
+<text class="pin_name_text" x="3.658" y="4.877" transform="rotate(-90 3.658 4.877)" style="font-size:12.192" dominant-baseline="central" text-anchor="end">~&#8201;&#8201;</text>
+<g s:x="3.658" s:y="0.000" s:pid="1" s:position="top"/>
+<polyline points="3.658,48.768 3.658,43.891" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="3.658" y="43.891" transform="rotate(-90 3.658 43.891)" style="font-size:12.192" dominant-baseline=""        text-anchor="end">2&#8201;&#8201;</text>
+<text class="pin_name_text" x="3.658" y="43.891" transform="rotate(-90 3.658 43.891)" style="font-size:12.192" dominant-baseline="central" text-anchor="start">&#8201;&#8201;~</text>
+<g s:x="3.658" s:y="48.768" s:pid="2" s:position="bottom"/>
+<text class="part_ref_text" x="10.973" y="14.630" transform="rotate(0 10.973 14.630)"   style="font-size:12.192" dominant-baseline="central" text-anchor="start" s:attribute="ref">L</text>
+<text class="part_name_text" x="10.973" y="34.138" transform="rotate(0 10.973 34.138)"   style="font-size:12.192" dominant-baseline="central" text-anchor="start" s:attribute="value">L_Small</text>
+</g>
+
+<g s:type="C_Small_1_" s:width="68.275" s:height="48.768" transform="translate(-0.000 0.000)" >
+<s:alias val="C_Small_1_"/>
+<polyline points="0.000,19.507 29.261,19.507" style="stroke-width:2.926" class="$cell_id symbol none" /><polyline points="0.000,29.261 29.261,29.261" style="stroke-width:3.170" class="$cell_id symbol none" /><polyline points="14.630,0.000 14.630,19.507" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="14.630" y="19.507" transform="rotate(-90 14.630 19.507)" style="font-size:12.192" dominant-baseline=""        text-anchor="start">&#8201;&#8201;1</text>
+<text class="pin_name_text" x="14.630" y="19.507" transform="rotate(-90 14.630 19.507)" style="font-size:12.192" dominant-baseline="central" text-anchor="end">~&#8201;&#8201;</text>
+<g s:x="14.630" s:y="0.000" s:pid="1" s:position="top"/>
+<polyline points="14.630,48.768 14.630,29.261" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="14.630" y="29.261" transform="rotate(-90 14.630 29.261)" style="font-size:12.192" dominant-baseline=""        text-anchor="end">2&#8201;&#8201;</text>
+<text class="pin_name_text" x="14.630" y="29.261" transform="rotate(-90 14.630 29.261)" style="font-size:12.192" dominant-baseline="central" text-anchor="start">&#8201;&#8201;~</text>
+<g s:x="14.630" s:y="48.768" s:pid="2" s:position="bottom"/>
+<text class="part_ref_text" x="17.069" y="7.315" transform="rotate(0 17.069 7.315)"   style="font-size:12.192" dominant-baseline="central" text-anchor="start" s:attribute="ref">C</text>
+<text class="part_name_text" x="17.069" y="43.891" transform="rotate(0 17.069 43.891)"   style="font-size:12.192" dominant-baseline="central" text-anchor="start" s:attribute="value">C_Small</text>
+</g>
+
+<g s:type="LM358_1_" s:width="146.304" s:height="104.851" transform="translate(0.000 -0.000)" >
+<s:alias val="LM358_1_"/>
+<polyline points="24.384,3.658 121.920,52.426 24.384,101.194 24.384,3.658" style="stroke-width:2.438" class="$cell_id symbol background" /><polyline points="0.000,28.042 24.384,28.042" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="24.384" y="28.042" transform="rotate(0 24.384 28.042)" style="font-size:12.192" dominant-baseline=""        text-anchor="end">3&#8201;&#8201;</text>
+<text class="pin_name_text" x="24.384" y="28.042" transform="rotate(0 24.384 28.042)" style="font-size:12.192" dominant-baseline="central" text-anchor="start">&#8201;&#8201;+</text>
+<g s:x="0.000" s:y="28.042" s:pid="3" s:position="left"/>
+<polyline points="0.000,76.810 24.384,76.810" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="24.384" y="76.810" transform="rotate(0 24.384 76.810)" style="font-size:12.192" dominant-baseline=""        text-anchor="end">2&#8201;&#8201;</text>
+<text class="pin_name_text" x="24.384" y="76.810" transform="rotate(0 24.384 76.810)" style="font-size:12.192" dominant-baseline="central" text-anchor="start">&#8201;&#8201;-</text>
+<g s:x="0.000" s:y="76.810" s:pid="2" s:position="left"/>
+<polyline points="146.304,52.426 121.920,52.426" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="121.920" y="52.426" transform="rotate(0 121.920 52.426)" style="font-size:12.192" dominant-baseline=""        text-anchor="start">&#8201;&#8201;1</text>
+<text class="pin_name_text" x="121.920" y="52.426" transform="rotate(0 121.920 52.426)" style="font-size:12.192" dominant-baseline="central" text-anchor="end">~&#8201;&#8201;</text>
+<g s:x="146.304" s:y="52.426" s:pid="1" s:position="right"/>
+<text class="part_ref_text" x="73.152" y="3.658" transform="rotate(0 73.152 3.658)"   style="font-size:12.192" dominant-baseline="central" text-anchor="start" s:attribute="ref">U</text>
+<text class="part_name_text" x="73.152" y="101.194" transform="rotate(0 73.152 101.194)"   style="font-size:12.192" dominant-baseline="central" text-anchor="start" s:attribute="value">LM2904</text>
+<text class="part_ref_text" x="73.152" y="3.658" transform="rotate(0 73.152 3.658)"   style="font-size:12.192" dominant-baseline="central" text-anchor="start" s:attribute="ref">U</text>
+<text class="part_name_text" x="73.152" y="101.194" transform="rotate(0 73.152 101.194)"   style="font-size:12.192" dominant-baseline="central" text-anchor="start" s:attribute="value">LM358</text>
+</g>
+<g s:type="LM358_2_" s:width="146.304" s:height="97.536" transform="translate(0.000 -0.000)" >
+<s:alias val="LM358_2_"/>
+<polyline points="24.384,0.000 121.920,48.768 24.384,97.536 24.384,0.000" style="stroke-width:2.438" class="$cell_id symbol background" /><polyline points="0.000,24.384 24.384,24.384" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="24.384" y="24.384" transform="rotate(0 24.384 24.384)" style="font-size:12.192" dominant-baseline=""        text-anchor="end">5&#8201;&#8201;</text>
+<text class="pin_name_text" x="24.384" y="24.384" transform="rotate(0 24.384 24.384)" style="font-size:12.192" dominant-baseline="central" text-anchor="start">&#8201;&#8201;+</text>
+<g s:x="0.000" s:y="24.384" s:pid="5" s:position="left"/>
+<polyline points="0.000,73.152 24.384,73.152" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="24.384" y="73.152" transform="rotate(0 24.384 73.152)" style="font-size:12.192" dominant-baseline=""        text-anchor="end">6&#8201;&#8201;</text>
+<text class="pin_name_text" x="24.384" y="73.152" transform="rotate(0 24.384 73.152)" style="font-size:12.192" dominant-baseline="central" text-anchor="start">&#8201;&#8201;-</text>
+<g s:x="0.000" s:y="73.152" s:pid="6" s:position="left"/>
+<polyline points="146.304,48.768 121.920,48.768" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="121.920" y="48.768" transform="rotate(0 121.920 48.768)" style="font-size:12.192" dominant-baseline=""        text-anchor="start">&#8201;&#8201;7</text>
+<text class="pin_name_text" x="121.920" y="48.768" transform="rotate(0 121.920 48.768)" style="font-size:12.192" dominant-baseline="central" text-anchor="end">~&#8201;&#8201;</text>
+<g s:x="146.304" s:y="48.768" s:pid="7" s:position="right"/>
+</g>
+<g s:type="LM358_3_" s:width="7.315" s:height="146.304" transform="translate(0.000 0.000)" >
+<s:alias val="LM358_3_"/>
+<polyline points="3.658,0.000 3.658,36.576" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="3.658" y="36.576" transform="rotate(-90 3.658 36.576)" style="font-size:12.192" dominant-baseline=""        text-anchor="start">&#8201;&#8201;8</text>
+<text class="pin_name_text" x="3.658" y="36.576" transform="rotate(-90 3.658 36.576)" style="font-size:12.192" dominant-baseline="central" text-anchor="end">V+&#8201;&#8201;</text>
+<g s:x="3.658" s:y="0.000" s:pid="8" s:position="top"/>
+<polyline points="3.658,146.304 3.658,109.728" style="stroke-width:0.960" class="$cell_id symbol none" />
+<text class="pin_num_text"  x="3.658" y="109.728" transform="rotate(-90 3.658 109.728)" style="font-size:12.192" dominant-baseline=""        text-anchor="end">4&#8201;&#8201;</text>
+<text class="pin_name_text" x="3.658" y="109.728" transform="rotate(-90 3.658 109.728)" style="font-size:12.192" dominant-baseline="central" text-anchor="start">&#8201;&#8201;V-</text>
+<g s:x="3.658" s:y="146.304" s:pid="4" s:position="bottom"/>
+</g>
+
+</svg>
