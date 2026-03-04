@@ -15,22 +15,64 @@ class SkidlExporter:
     """
 
     @staticmethod
+    def _find_kicad_symbol_dir() -> str | None:
+        """Auto-detect the KiCad symbol library directory on common installation paths."""
+        # 1. Explicit env var override (highest priority)
+        from_env = os.environ.get("KICAD_SYMBOL_DIR") or os.environ.get("KICAD_PATH")
+        if from_env and os.path.isdir(from_env):
+            return from_env
+
+        # 2. Dynamic discovery of KiCad installations
+        candidates = []
+        
+        # Windows
+        program_files_paths = [
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+            os.environ.get("LOCALAPPDATA", "") + r"\Programs"
+        ]
+        for pf in program_files_paths:
+            if pf and os.path.exists(pf):
+                kicad_base = os.path.join(pf, "KiCad")
+                if os.path.exists(kicad_base):
+                    for version_dir in os.listdir(kicad_base):
+                        sym_path = os.path.join(kicad_base, version_dir, "share", "kicad", "symbols")
+                        candidates.append(sym_path)
+                        
+        # Linux / macOS common paths
+        candidates.extend([
+            "/usr/share/kicad/symbols",
+            "/usr/local/share/kicad/symbols",
+            "/Applications/KiCad/KiCad.app/Contents/SharedSupport/symbols",
+        ])
+        
+        for path in candidates:
+            if path and os.path.isdir(path):
+                return path
+        return None
+
+    @staticmethod
     def export(circuit: Circuit, output_dir: str):
         """Translates SolverSCH Circuit to KiCad NET file via SKiDL."""
+        import logging
+        log = logging.getLogger("solver_sch.kicad_exporter")
+
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
         # 1. Netlist Construction with SKiDL
         skidl_ckt = SKiDLCircuit()
         
-        # Configure KiCad paths for SKiDL so it can find symbols for generate_svg rendering
-        kicad_base = r"C:\Users\micha\AppData\Local\Programs\KiCad\9.0"
-        if os.path.exists(kicad_base):
-            sym_dir = os.path.join(kicad_base, "share", "kicad", "symbols")
+        # Configure KiCad paths dynamically (no hardcoded user paths)
+        sym_dir = SkidlExporter._find_kicad_symbol_dir()
+        if sym_dir:
             os.environ["KICAD_SYMBOL_DIR"] = sym_dir
             from skidl import lib_search_paths, KICAD
             if sym_dir not in lib_search_paths[KICAD]:
                 lib_search_paths[KICAD].append(sym_dir)
+            log.debug("KiCad symbol dir: %s", sym_dir)
+        else:
+            log.warning("KICAD_SYMBOL_DIR not found. Set KICAD_SYMBOL_DIR env var or install KiCad. SVG generation may fail.")
               
         # Local cache for skidl parts and nets
         sk_parts = {}
@@ -54,16 +96,15 @@ class SkidlExporter:
 
         try:
             skidl_ckt.generate_netlist(file_=net_file)
-            print(f"[SKIDL EXPORT] Netlist successfully saved to {net_file}")
+            log.info("Netlist saved to %s", net_file)
             
-            # Optional: Generate graphical schematic using NetlistSVG
-            # SKiDL's generate_svg actually writes a .json file and runs netlistsvg for us!
             svg_base = os.path.join(output_dir, basename)
             skidl_ckt.generate_svg(file_=svg_base)
-            print(f"[SKIDL EXPORT] Schematic SVG saved to {svg_base}.svg")
+            log.info("Schematic SVG saved to %s.svg", svg_base)
             
         except Exception as e:
-            print(f"[SKIDL EXPORT] Error during KiCad asset generation: {e}")
+            log.error("KiCad asset generation failed: %s", e)
+
 
     @staticmethod
     def _create_skidl_part(comp, circuit) -> Part:

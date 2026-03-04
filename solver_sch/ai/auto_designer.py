@@ -6,60 +6,39 @@ Evaluates AI-generated Netlists through closed-loop physical feedback.
 import os
 import re
 import random
+import logging
 import numpy as np
-from typing import List, Dict
-
-from google import genai
-from google.genai import types
+from typing import List, Dict, Optional
 
 from solver_sch.parser.netlist_parser import NetlistParser
 from solver_sch.builder.stamper import MNAStamper
 from solver_sch.solver.sparse_solver import SparseSolver
 from solver_sch.utils.verifier import LTspiceVerifier
+from solver_sch.ai.llm_providers import LLMProvider, get_provider
 
-import time
-from google.genai import errors
+logger = logging.getLogger("solver_sch.auto_designer")
 
-def ask_llm(prompt_history: List[Dict[str, str]]) -> str:
-    """
-    Executes a real generative inference using the Google Gemini API.
-    Calls `gemini-2.5-flash` for high-performance deterministic hardware engineering.
-    """
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("CRITICAL ERROR: GEMINI_API_KEY environment variable is not set. Please set it to run the Autonomous Designer.")
-        
-    client = genai.Client(api_key=api_key)
-    
-    # Extract only the content values since our list uses generic dict maps.
-    full_prompt = "\n\n".join([msg.get("content", "") for msg in prompt_history])
-    
-    while True:
-        try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=full_prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction="You are an expert analog electronics engineer. You design circuits based on user requirements. You MUST output ONLY valid SPICE netlists wrapped in ```spice``` markdown blocks. Do not add explanations. Use standard E12 resistor values.",
-                    temperature=0.1 # Low temperature for deterministic engineering
-                )
-            )
-            return response.text
-        except errors.ClientError as e:
-            if e.code == 429:
-                print("\n[API QUOTA REACHED] Naruszono limit zapytań Gemini Free Tier (Błąd 429).")
-                print("Usypianie agenta na 45 sekund w celu zresetowania limitu chmury...")
-                time.sleep(45)
-                print("[RESUMING] Ponawianie uderzenia do chmury obliczeniowej...")
-            else:
-                # Re-raise other unexpected ClientErrors
-                raise e
 
 class AutonomousDesigner:
-    """An AI Agent that iterates over circuit designs using a real MNA physical environment."""
+    """An AI Agent that iterates over circuit designs using a real MNA physical environment.
+
+    Args:
+        target_goal: Natural language design goal with optional bracket tags.
+                     Examples: "[AC TARGET: 159Hz -3dB]", "[DC TARGET: 3.3V]"
+        llm: Optional LLMProvider instance. Defaults to GeminiProvider.
+             Use get_provider('stub') for offline testing without API keys.
+
+    Example:
+        from solver_sch.ai.llm_providers import get_provider
+        designer = AutonomousDesigner("RC 1kHz low-pass filter", llm=get_provider("stub"))
+        designer.run_optimization_loop()
+    """
     
-    def __init__(self, target_goal: str):
+    def __init__(self, target_goal: str, llm: Optional[LLMProvider] = None):
         self.target_goal = target_goal
+        
+        # LLM provider — defaults to Gemini, but any LLMProvider works
+        self._llm: LLMProvider = llm if llm is not None else get_provider("gemini")
         
         match_dc = re.search(r"\[DC TARGET: ([\d\.]+)V\]", self.target_goal, re.IGNORECASE)
         match_ac = re.search(r"\[AC TARGET: ([\d\.]+)Hz ([\-\d\.]+)dB\]", self.target_goal, re.IGNORECASE)
@@ -68,7 +47,7 @@ class AutonomousDesigner:
         match_schematic = re.search(r"\[SCHEMATIC\]", self.target_goal, re.IGNORECASE)
         self.show_schematic = bool(match_schematic)
         
-        self.target_max_current_ma = None
+        self.target_max_current_ma: Optional[float] = None
         if match_current:
             self.target_max_current_ma = float(match_current.group(1))
             
@@ -126,7 +105,10 @@ class AutonomousDesigner:
             print(f"[Iteration {iteration}/{max_iterations}] Calling LLM...")
             
             # Step 1: Infer LLM Generation
-            ai_text = ask_llm(self.conversation_history)
+            ai_text = self._llm.generate(
+                "\n\n".join([m.get("content", "") for m in self.conversation_history]),
+                system_instruction=self.system_prompt,
+            )
             self.conversation_history.append({"role": "assistant", "content": ai_text})
             
             # Step 2: Extract strictly formatted Netlist
@@ -136,6 +118,14 @@ class AutonomousDesigner:
             try:
                 # Step 3: Parsing string to Circuit domain
                 circuit = NetlistParser.parse_netlist(netlist_str, circuit_name=f"AI_Iter_{iteration}")
+                
+                val = circuit.validate()
+                if not val.valid:
+                    error_msgs = [e.message for e in val.errors]
+                    feedback = f"Simulation failed. Your circuit contains topological or definition errors: {' | '.join(error_msgs)} Please fix these errors and provide the updated netlist."
+                    print(f"--> FAILED Validation: {feedback}")
+                    self.conversation_history.append({"role": "user", "content": feedback})
+                    continue
                 
                 # Step 4: Compiling to numerical physics space
                 stamper = MNAStamper(circuit)

@@ -1,0 +1,43 @@
+﻿SHEETS: ['Summary', 'DC Operating Point', 'AC Sweep', 'BOM']
+
+=== SUMMARY ===
+  ['Circuit Analysis Report: Inverting OpAmp with LP Filter', None, None, None]
+  ['Ground Node:', '0', None, None]
+  ['Network Nodes', None, None, None]
+  ['0', None, None, None]
+  ['in', None, None, None]
+  ['op_inv', None, None, None]
+  ['op_out', None, None, None]
+  ['out', None, None, None]
+  ['vcc', None, None, None]
+  ['Components Overview', None, None, None]
+  ['Reference', 'Type', 'Value', 'Terminals']
+  ['Vcc_src', 'DC Voltage Source', '5.0 V', 'vcc, 0']
+  ['Rin', 'Resistor', '10000.0 ╬ę', 'in, op_inv']
+  ['Rf', 'Resistor', '39000.0 ╬ę', 'op_inv, op_out']
+  ['U1', 'Operational Amplifier', 'Gain: 100000.0', '0, op_inv, op_out']
+  ['R_filter', 'Resistor', '1000.0 ╬ę', 'op_out, out']
+  ['C_filter', 'Capacitor', '1e-06 F', 'out, 0']
+
+=== DC Operating Point ===
+  ('DC Operating Point Analysis', None, None)
+  ('Node Voltages', None, None)
+  ('Node', 'Voltage [V]', None)
+  ('0', 0, None)
+  ('in', 0, None)
+  ('op_inv', 0, None)
+  ('op_out', 0, None)
+  ('out', 0, None)
+  ('vcc', 5, None)
+  ('Voltage Source Currents', None, None)
+  ('Source', 'Current [A]', None)
+  ('Vcc_src', -5e-12, None)
+
+=== AC Sweep (85 rows x 16 cols) ===
+  HEADER: ['AC Frequency Sweep Analysis', None, None, None, None, None, None, None, None, None, None, None] ...
+  Total AC data rows: 83
+Traceback (most recent call last):
+  File "C:\Users\micha\Desktop\SolverSCH\scripts\_analyze_excel.py", line 72, in <module>
+    print(f'  First row (f={r0[0]:.1f} Hz): {r0[:6]}')
+                           ^^^^^^^^^^^
+ValueError: Unknown format code 'f' for object of type 'str'

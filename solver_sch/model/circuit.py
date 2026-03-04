@@ -297,7 +297,96 @@ class Circuit:
         for comp in self._components:
             nodes.update(comp.nodes())
         return nodes
-        
+
+    def validate(self):
+        """Validate the circuit topology and component values.
+
+        Checks performed:
+        - Negative or zero component values (R, L, C must be positive)
+        - No voltage/AC sources (no excitation to solve)
+        - Floating nodes (nodes with only one connection — can't form a loop)
+        - Duplicate component reference names
+        - Ground node not present in the network
+
+        Returns:
+            solver_sch.results.ValidationResult with .valid, .errors, .warnings
+        """
+        # Import here to avoid circular dep at module load time
+        from solver_sch.results import ValidationResult, ValidationError
+
+        errors = []
+        warnings = []
+
+        # 1. Duplicate reference names
+        seen_names: Dict[str, int] = {}
+        for comp in self._components:
+            seen_names[comp.name] = seen_names.get(comp.name, 0) + 1
+        for name, count in seen_names.items():
+            if count > 1:
+                errors.append(ValidationError("error", f"Duplicate component name '{name}' appears {count} times."))
+
+        # 2. Negative / zero values for passive components
+        for comp in self._components:
+            if isinstance(comp, Resistor) and comp.resistance <= 0:
+                errors.append(ValidationError("error", f"Resistor '{comp.name}' has invalid resistance={comp.resistance} Ω (must be > 0).", comp.name))
+            if isinstance(comp, Capacitor) and comp.capacitance <= 0:
+                errors.append(ValidationError("error", f"Capacitor '{comp.name}' has invalid capacitance={comp.capacitance} F (must be > 0).", comp.name))
+            if isinstance(comp, Inductor) and comp.inductance <= 0:
+                errors.append(ValidationError("error", f"Inductor '{comp.name}' has invalid inductance={comp.inductance} H (must be > 0).", comp.name))
+
+        # 3. No voltage source (no excitation)
+        has_source = any(isinstance(c, (VoltageSource, ACVoltageSource)) for c in self._components)
+        if not has_source:
+            warnings.append(ValidationError("warning", "No voltage source found. DC solve may return all-zero voltages."))
+
+        # 3b. No AC source — critical for AC / transient analysis
+        has_ac_source = any(isinstance(c, ACVoltageSource) for c in self._components)
+        if not has_ac_source:
+            warnings.append(ValidationError(
+                "warning",
+                "No ACVoltageSource found. AC sweep and transient analysis will return all-zero magnitudes (-400 dB). "
+                "Add: ACVoltageSource('Vin', 'in', '0', amplitude=1.0, frequency=1000) to the circuit."
+            ))
+
+        # 4. Ground node not in network
+        all_nodes = self.get_unique_nodes()
+        if self.ground_name not in all_nodes:
+            errors.append(ValidationError("error", f"Ground node '{self.ground_name}' is not connected to any component."))
+
+        # 5. Floating node detection (node appears in only one component terminal)
+        from collections import Counter
+        node_count: Counter = Counter()
+        for comp in self._components:
+            for node in comp.nodes():
+                node_count[node] += 1
+        for node, count in node_count.items():
+            if node != self.ground_name and count < 2:
+                warnings.append(ValidationError("warning", f"Node '{node}' is only connected to 1 component — may be floating."))
+
+        valid = len(errors) == 0
+        return ValidationResult(valid=valid, errors=errors, warnings=warnings)
+
+    def describe(self) -> dict:
+        """Return a structured human/LLM-readable description of the circuit.
+
+        Returns:
+            Dict with name, ground, component list, and unique nodes.
+        """
+        return {
+            "name": self.name,
+            "ground": self.ground_name,
+            "nodes": sorted(self.get_unique_nodes()),
+            "components": [
+                {
+                    "ref": c.name,
+                    "type": type(c).__name__,
+                    "nodes": list(c.nodes()),
+                    "value": c.value,
+                }
+                for c in self._components
+            ],
+        }
+
 # Class Aliases for EDA Test Integrity
 NMOS = MOSFET_N
 PMOS = MOSFET_P
