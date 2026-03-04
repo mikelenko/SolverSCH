@@ -557,6 +557,73 @@ class ExcelReportGenerator:
         ws.add_chart(chart, f"A{hr + data_rows + 3}")
         _auto_width(ws)
 
+    # ── LTspice Comparison Sheet ─────────────────────────────────
+
+    def _write_ltspice_comparison(self, wb: Workbook):
+        """Write a cross-validation comparison sheet with PASS/WARN/FAIL formatting."""
+        ws = wb.create_sheet("LTspice Comparison")
+
+        PASS_FILL = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+        PASS_FONT = Font(color="006100", bold=True)
+        WARN_FILL = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+        WARN_FONT = Font(color="9C6500", bold=True)
+        FAIL_FILL = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+        FAIL_FONT = Font(color="9C0006", bold=True)
+
+        ws.merge_cells("A1:F1")
+        ws["A1"] = "LTspice Cross-Validation Report"
+        ws["A1"].font = TITLE_FONT
+
+        current_row = 3
+
+        for analysis_name, comparison in self.ltspice_results.items():
+            # Section header
+            ws.cell(row=current_row, column=1, value=f"{analysis_name.upper()} Analysis")
+            ws.cell(row=current_row, column=1).font = SUBTITLE_FONT
+
+            overall_status = "✅ PASSED" if comparison.passed else "❌ FAILED"
+            ws.cell(row=current_row, column=3, value=f"Overall: {overall_status}")
+            ws.cell(row=current_row, column=5, value=f"Tolerance: {comparison.tolerance_pct}%")
+            current_row += 1
+
+            # Table header
+            headers = ["Node", "SolverSCH", "LTspice", "Error %", "Status", "Info"]
+            for col, h in enumerate(headers, 1):
+                ws.cell(row=current_row, column=col, value=h)
+            _style_header_row(ws, current_row, len(headers))
+            current_row += 1
+
+            # Data rows
+            for nc in comparison.nodes:
+                ws.cell(row=current_row, column=1, value=nc.node)
+                ws.cell(row=current_row, column=2, value=round(nc.solver_value, 6) if not (nc.solver_value != nc.solver_value) else "N/A")
+                ws.cell(row=current_row, column=3, value=round(nc.ltspice_value, 6) if not (nc.ltspice_value != nc.ltspice_value) else "N/A")
+                ws.cell(row=current_row, column=4, value=round(nc.error_pct, 3) if not (nc.error_pct != nc.error_pct) else "N/A")
+
+                status_cell = ws.cell(row=current_row, column=5, value=nc.status)
+                if nc.status == "PASS":
+                    status_cell.fill = PASS_FILL
+                    status_cell.font = PASS_FONT
+                elif nc.status == "WARN":
+                    status_cell.fill = WARN_FILL
+                    status_cell.font = WARN_FONT
+                else:
+                    status_cell.fill = FAIL_FILL
+                    status_cell.font = FAIL_FONT
+
+                ws.cell(row=current_row, column=6, value=nc.info)
+
+                for col in range(1, 7):
+                    ws.cell(row=current_row, column=col).border = THIN_BORDER
+                current_row += 1
+
+            # Summary row
+            ws.cell(row=current_row, column=1, value=f"Max Error: {comparison.max_error_pct:.3f}%")
+            ws.cell(row=current_row, column=1).font = Font(bold=True)
+            current_row += 2  # blank row between analyses
+
+        _auto_width(ws)
+
     # ── BOM Sheet ──────────────────────────────────────────────────
 
     def _write_bom(self, wb: Workbook):

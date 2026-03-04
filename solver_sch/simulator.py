@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 
@@ -122,16 +122,6 @@ class Simulator:
             print(result.to_json())
             v_out = result.node_voltages["out"]
         """
-        if self.active_backend == "ltspice":
-            from solver_sch.utils.ltspice_runner import LTspiceRunner
-            import os
-            os.makedirs("ltspice_sim", exist_ok=True)
-            voltages, currents = LTspiceRunner.run_dc(self.circuit, workdir="ltspice_sim")
-            return DcAnalysisResult(
-                node_voltages=voltages,
-                source_currents=currents,
-            )
-
         if self.active_backend == "ltspice":
             from solver_sch.utils.ltspice_runner import LTspiceRunner
             import os
@@ -379,11 +369,9 @@ class Simulator:
         
         if "dc" in analyses:
             solver_dc = self.dc()
-            ltspice_dc = LTspiceRunner.run_dc(self.circuit, workdir=workdir)
+            ltspice_voltages, ltspice_currents = LTspiceRunner.run_dc(self.circuit, workdir=workdir)
             
-            # W LTspice węzeł zasilania DC często ma sztywną wartość
-            # Tolerancja dla DC wynosi zazwyczaj 0.1% dla sprawdzania algorytmów numerycznych
-            comp_dc = LTspiceComparator.compare_dc(solver_dc, ltspice_dc, tolerance_pct=0.1)
+            comp_dc = LTspiceComparator.compare_dc(solver_dc, ltspice_voltages, tolerance_pct=0.1)
             results["dc"] = comp_dc
             
         if "ac" in analyses:
