@@ -94,15 +94,15 @@ class AutonomousDesigner:
         Executes the iterative design-evaluate-adjust feedback loop natively.
         Targeting an RC 159Hz (-3dB) filter logic.
         """
-        print(f"=== Autonomous Designer Session STARTED ===")
-        print(f"Goal: {self.target_goal}")
+        logger.info("=== Autonomous Designer Session STARTED ===")
+        logger.info("Goal: %s", self.target_goal)
         
         # 1. Initiating the Goal
         self.conversation_history.append({"role": "user", "content": self.target_goal})
         
         for iteration in range(1, max_iterations + 1):
-            print(f"\n[{self.sim_mode} Evaluation Mode Activacted]")
-            print(f"[Iteration {iteration}/{max_iterations}] Calling LLM...")
+            logger.debug("[%s Evaluation Mode Activacted]", self.sim_mode)
+            logger.info("[Iteration %d/%d] Calling LLM...", iteration, max_iterations)
             
             # Step 1: Infer LLM Generation
             ai_text = self._llm.generate(
@@ -113,7 +113,7 @@ class AutonomousDesigner:
             
             # Step 2: Extract strictly formatted Netlist
             netlist_str = self._extract_netlist(ai_text)
-            print("Extracted Netlist:\n" + "-"*40 + f"\n{netlist_str}\n" + "-"*40)
+            logger.debug("Extracted Netlist:\n" + "-"*40 + f"\n{netlist_str}\n" + "-"*40)
             
             try:
                 # Step 3: Parsing string to Circuit domain
@@ -123,7 +123,7 @@ class AutonomousDesigner:
                 if not val.valid:
                     error_msgs = [e.message for e in val.errors]
                     feedback = f"Simulation failed. Your circuit contains topological or definition errors: {' | '.join(error_msgs)} Please fix these errors and provide the updated netlist."
-                    print(f"--> FAILED Validation: {feedback}")
+                    logger.warning("--> FAILED Validation: %s", feedback)
                     self.conversation_history.append({"role": "user", "content": feedback})
                     continue
                 
@@ -154,12 +154,12 @@ class AutonomousDesigner:
                     idx_target = (np.abs(freqs - self.target_ac_freq)).argmin()
                     mag_at_target = mags_db.get("out", np.zeros(len(freqs)))[idx_target]
                     
-                    print(f"[Verification] Mag at {freqs[idx_target]:.2f}Hz = {mag_at_target:.3f} dB")
+                    logger.info("[Verification] Mag at %.2fHz = %.3f dB", freqs[idx_target], mag_at_target)
                     
                     # Step 7 (Feedback): Perfect Condition
                     # Math limits: Target -3.0 dB ~ Tol +/- 0.5dB
                     if abs(mag_at_target - self.target_ac_mag) <= 0.5:
-                        print("--> SUCCESS: AI designed the circuit perfectly!")
+                        logger.info("--> SUCCESS: AI designed the circuit perfectly!")
                         if self.monte_carlo_runs > 0:
                             self._run_monte_carlo(netlist_str, 'AC')
                         break
@@ -170,7 +170,7 @@ class AutonomousDesigner:
                             f"Simulation failed. At {self.target_ac_freq}Hz, the magnitude was {mag_at_target:.2f} dB. "
                             f"Target is {self.target_ac_mag} dB. Please adjust R or C values and provide the updated netlist."
                         )
-                        print(f"--> FAILED: Providing feedback to LLM: {feedback}")
+                        logger.warning("--> FAILED: Providing feedback to LLM: %s", feedback)
                         self.conversation_history.append({"role": "user", "content": feedback})
                 
                 elif self.sim_mode == 'DC':
@@ -179,9 +179,9 @@ class AutonomousDesigner:
                     i_v1 = mna_result.voltage_source_currents.get('V1', 0.0)
                     i_v1_ma = abs(i_v1) * 1000.0
                     
-                    print(f"[Verification] DC Voltage at node 'out' = {v_out:.3f} V")
+                    logger.info("[Verification] DC Voltage at node 'out' = %.3f V", v_out)
                     if self.target_max_current_ma is not None:
-                        print(f"[Verification] Current through V1 = {i_v1_ma:.3f} mA")
+                        logger.info("[Verification] Current through V1 = %.3f mA", i_v1_ma)
                     
                     # Dual-Feedback checking
                     v_pass = abs(v_out - self.target_dc_voltage) <= 0.1
@@ -190,15 +190,15 @@ class AutonomousDesigner:
                         i_pass = i_v1_ma <= self.target_max_current_ma
                         
                     if v_pass and i_pass:
-                        print("--> SUCCESS: AI designed the circuit perfectly in SolverSCH!")
+                        logger.info("--> SUCCESS: AI designed the circuit perfectly in SolverSCH!")
                         
                         # Próba przemysłowej weryfikacji (Sign-off)
                         passed, msg = LTspiceVerifier.verify_dc(circuit, self.target_dc_voltage)
                         
                         if passed:
-                            print(f"[VERIFIED] {msg}")
+                            logger.info("[VERIFIED] %s", msg)
                         else:
-                            print(f"[CRITICAL WARNING] {msg}")
+                            logger.error("[CRITICAL WARNING] %s", msg)
 
                         if self.monte_carlo_runs > 0:
                             self._run_monte_carlo(netlist_str, 'DC')
@@ -217,22 +217,22 @@ class AutonomousDesigner:
                                 f"Target is {self.target_dc_voltage} V. Please adjust resistor values and provide the updated netlist."
                             )
                         
-                        print(f"--> FAILED: Providing feedback to LLM: {feedback}")
+                        logger.warning("--> FAILED: Providing feedback to LLM: %s", feedback)
                         self.conversation_history.append({"role": "user", "content": feedback})
                     
             except Exception as e:
                 # Execution crashed structurally
                 error_feedback = f"Your netlist resulted in a simulator crash: {str(e)}. Fix the syntax."
-                print(f"--> CRASH: {error_feedback}")
+                logger.error("--> CRASH: %s", error_feedback)
                 self.conversation_history.append({"role": "user", "content": error_feedback})
                 
         else:
-            print(f"\n=== Session FAILED: Max iterations ({max_iterations}) reached. ===")
+            logger.error("=== Session FAILED: Max iterations (%d) reached. ===", max_iterations)
 
     def _run_monte_carlo(self, base_netlist: str, mode: str):
         """Runs N Monte Carlo simulations perturbing R and C with 5% Gaussian tolerance."""
-        print(f"\n=== MONTE CARLO ANALYSIS ({self.monte_carlo_runs} Runs) ===")
-        print("Perturbing Component Tolerances (R, C) using Standard Gaussian Distribution (5%)...")
+        logger.info("=== MONTE CARLO ANALYSIS (%d Runs) ===", self.monte_carlo_runs)
+        logger.info("Perturbing Component Tolerances (R, C) using Standard Gaussian Distribution (5%)...")
         results = []
         pass_count = 0
         
@@ -273,7 +273,7 @@ class AutonomousDesigner:
                 pass # Failed matrix convergence counts as a fail.
                 
         if not results:
-            print("Monte Carlo Analysis FAILED entirely structurally.")
+            logger.error("Monte Carlo Analysis FAILED entirely structurally.")
             return
             
         mean_val = np.mean(results)
@@ -281,8 +281,8 @@ class AutonomousDesigner:
         yield_pct = (pass_count / self.monte_carlo_runs) * 100.0
         
         target_unit = "V" if mode == 'DC' else "dB"
-        print(f"Mean Output: {mean_val:.2f}{target_unit} | Std Dev: {std_dev:.2f}{target_unit}")
-        print(f"Manufacturing Yield: {yield_pct:.1f}% (Surviving within target bounds)")
+        logger.info("Mean Output: %.2f%s | Std Dev: %.2f%s", mean_val, target_unit, std_dev, target_unit)
+        logger.info("Manufacturing Yield: %.1f%% (Surviving within target bounds)", yield_pct)
 
     def _perturb_netlist(self, netlist: str) -> str:
         """Perturbs explicitly R and C components in SPICE raw structure directly."""

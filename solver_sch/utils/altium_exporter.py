@@ -1,10 +1,13 @@
 import os
 import math
 from typing import Dict, Tuple, Set
+import logging
 from solver_sch.model.circuit import (
     Resistor, Capacitor, Inductor, VoltageSource, ACVoltageSource,
     Diode, BJT, MOSFET_N, MOSFET_P, OpAmp, Comparator, Circuit
 )
+
+logger = logging.getLogger("solver_sch.utils.altium_exporter")
 
 class AltiumScriptExporter:
     """Generates an Altium Designer DelphiScript (.pas) to recreate the schematic."""
@@ -93,7 +96,7 @@ class AltiumScriptExporter:
         with open(filename, "w") as f:
             f.write("\n".join(lines))
         
-        print(f"[ALTIUM EXPORT] v2 DelphiScript saved to {filename}")
+        logger.info("[ALTIUM EXPORT] v2 DelphiScript saved to %s", filename)
 
     @staticmethod
     def _get_pin_offsets(comp) -> Dict[str, Tuple[int, int]]:

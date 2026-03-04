@@ -1,9 +1,9 @@
-import pytest
 from solver_sch.ai.auto_designer import AutonomousDesigner
+from solver_sch.ai.llm_providers import get_provider
 
 def test_monte_carlo_parsing():
     goal = "[DC TARGET: 5.0V] [MONTE CARLO: 500] Zaprojektuj dzielnik napięcia"
-    designer = AutonomousDesigner(target_goal=goal)
+    designer = AutonomousDesigner(target_goal=goal, llm=get_provider("stub"))
     
     assert designer.sim_mode == 'DC'
     assert designer.target_dc_voltage == 5.0
@@ -11,7 +11,7 @@ def test_monte_carlo_parsing():
     
 def test_monte_carlo_perturbation():
     goal = "[DC TARGET: 5.0V] [MONTE CARLO: 1]"
-    designer = AutonomousDesigner(target_goal=goal)
+    designer = AutonomousDesigner(target_goal=goal, llm=get_provider("stub"))
     
     base_netlist = """* Test Netlist
 V1 in 0 10

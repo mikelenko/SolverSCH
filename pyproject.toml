@@ -17,5 +17,8 @@ dependencies = [
     "plotly"
 ]
 
+[project.scripts]
+solversch = "solver_sch.cli:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/solver_sch"]
+packages = ["solver_sch"]

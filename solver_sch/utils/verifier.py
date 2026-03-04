@@ -1,7 +1,10 @@
 import subprocess
 import os
+import logging
 from PyLTSpice import RawRead
 from solver_sch.utils.exporter import LTspiceExporter
+
+logger = logging.getLogger("solver_sch.utils.verifier")
 
 class LTspiceVerifier:
     """Uruchamia LTspice w trybie batch i weryfikuje wyniki."""
@@ -16,7 +19,7 @@ class LTspiceVerifier:
         if not os.path.exists(cls.LTSPICE_PATH):
             raise FileNotFoundError(f"LTspice executable not found at {cls.LTSPICE_PATH}")
 
-        print(f"[LTspiceVerifier] Found LTspice at: {cls.LTSPICE_PATH}")
+        logger.debug("Found LTspice at: %s", cls.LTSPICE_PATH)
         # -b: Batch mode, -Run: Start simulation immediately
         subprocess.run([cls.LTSPICE_PATH, "-b", "-Run", os.path.abspath("signoff.cir")], check=True)
             
@@ -41,7 +44,7 @@ class LTspiceVerifier:
             return False, f"Sign-off Error: LTspice executable not found at {cls.LTSPICE_PATH}"
 
         try:
-            print(f"[LTspiceVerifier] Found LTspice at: {cls.LTSPICE_PATH}")
+            logger.debug("Found LTspice at: %s", cls.LTSPICE_PATH)
             # -b: Batch mode, -Run: Start simulation immediately
             subprocess.run([cls.LTSPICE_PATH, "-b", "-Run", os.path.abspath("signoff.cir")], check=True)
             

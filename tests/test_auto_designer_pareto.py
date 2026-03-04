@@ -1,9 +1,9 @@
-import pytest
 from solver_sch.ai.auto_designer import AutonomousDesigner
+from solver_sch.ai.llm_providers import get_provider
 
 def test_pareto_parsing_logic():
     goal = "[DC TARGET: 5.0V] [MAX CURRENT: 10.0mA] Zaprojektuj dzielnik"
-    designer = AutonomousDesigner(target_goal=goal)
+    designer = AutonomousDesigner(target_goal=goal, llm=get_provider("stub"))
     
     assert designer.sim_mode == 'DC'
     assert designer.target_dc_voltage == 5.0
@@ -11,7 +11,7 @@ def test_pareto_parsing_logic():
 
 def test_regular_dc_parsing_logic():
     goal = "[DC TARGET: 12.0V] Zaprojektuj"
-    designer = AutonomousDesigner(target_goal=goal)
+    designer = AutonomousDesigner(target_goal=goal, llm=get_provider("stub"))
     
     assert designer.sim_mode == 'DC'
     assert designer.target_dc_voltage == 12.0

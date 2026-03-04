@@ -1,5 +1,6 @@
 import os
 from solver_sch.ai.auto_designer import AutonomousDesigner
+from solver_sch.ai.llm_providers import get_provider
 
 def test_signoff_flow():
     print("=== Testing LTspice Sign-off Flow ===")
@@ -7,7 +8,11 @@ def test_signoff_flow():
     # We use a simple goal that the AI can solve in 1-2 iterations.
     goal = "[DC TARGET: 6.0V] Design a simple voltage divider to get 6V from 12V input. [MAX CURRENT: 10mA]"
     
-    designer = AutonomousDesigner(goal)
+    # Fallback to stub provider if no API key is provided
+    if "GEMINI_API_KEY" not in os.environ:
+        designer = AutonomousDesigner(goal, llm=get_provider("stub"))
+    else:
+        designer = AutonomousDesigner(goal)
     
     # We only need to run the loop. 
     # The integration in auto_designer.py will trigger LTspiceVerifier on SUCCESS.

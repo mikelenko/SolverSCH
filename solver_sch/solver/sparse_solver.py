@@ -16,7 +16,11 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.sparse import lil_matrix, csr_matrix
 import scipy.sparse.linalg as splalg
+import scipy.sparse.linalg as splalg
 from scipy.sparse.linalg import spsolve
+import logging
+
+logger = logging.getLogger("solver_sch.solver.sparse_solver")
 
 
 @dataclass
@@ -143,7 +147,7 @@ class SparseSolver:
             if diff < tol:
                 break
         else:
-            print(f"Warning: Newton-Raphson did not converge after 100 iterations. Last diff: {diff:.2e}")
+            logger.warning("Newton-Raphson did not converge after 100 iterations. Last diff: %.2e", diff)
 
         self.A_csr = A_csr 
         self.x_vec = x
@@ -236,7 +240,7 @@ class SparseSolver:
                 if diff < tol:
                     break
             else:
-                print(f"Warning: NR did not converge at t={t:.5f}")
+                logger.warning("NR did not converge at t=%.5f", t)
             
             # Finalize numerical timestep states
             x_prev = x_guess
@@ -302,7 +306,7 @@ class SparseSolver:
         # Results structure for List Mode
         list_results: List[Tuple[float, MNAResult]] = []
         
-        print(f"\n[AC Analysis] Analyzing {num_points} points...")
+        logger.debug("[AC Analysis] Analyzing %d points...", num_points)
         
         for idx, freq in enumerate(freqs):
             # Formulate Complex Linear Matrix for this frequency

@@ -21,6 +21,9 @@ from solver_sch.model.circuit import (
     OpAmp,
     Comparator
 )
+import logging
+
+logger = logging.getLogger("solver_sch.parser.netlist_parser")
 
 
 @dataclass
@@ -197,7 +200,7 @@ class NetlistParser:
                 connected_nodes = parts[1:-1]
                 
                 if subckt_name not in subckts_map:
-                    print(f"Netlist Parsing Warn: Unknown subcircuit '{subckt_name}' for instance {inst_name}")
+                    logger.warning("Unknown subcircuit '%s' for instance %s", subckt_name, inst_name)
                     continue
                     
                 flat_lines.extend(cls._flatten_hierarchy(inst_name, connected_nodes, subckts_map[subckt_name], subckts_map))
@@ -261,7 +264,7 @@ class NetlistParser:
                     elif m_type == 'PMOS':
                         circuit.add_component(MOSFET_P(name, parts[1], parts[2], parts[3], w=w_val, l=l_val))
                     else:
-                        print(f"Warning: Unknown MOSFET type '{m_type}' for {name}. Defaulting to NMOS.")
+                        logger.warning("Unknown MOSFET type '%s' for %s. Defaulting to NMOS.", m_type, name)
                         circuit.add_component(MOSFET_N(name, parts[1], parts[2], parts[3], w=w_val, l=l_val))
                     
                 # 4. Op-Amp Macromodel
@@ -276,6 +279,6 @@ class NetlistParser:
                     circuit.add_component(Comparator(name, parts[1], parts[2], parts[3], v_high, v_low))
             
             except Exception as e:
-                print(f"Netlist Parsing Warn: Could not load line -> '{line}' | Exception: {str(e)}")
+                logger.warning("Could not load line -> '%s' | Exception: %s", line, str(e))
                 
         return circuit

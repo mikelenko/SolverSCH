@@ -28,6 +28,9 @@ from solver_sch.model.circuit import (
 )
 from solver_sch.builder.stamper import MNAStamper
 from solver_sch.solver.sparse_solver import SparseSolver
+import logging
+
+logger = logging.getLogger("solver_sch.utils.excel_report")
 
 
 # ── Styling Constants ──────────────────────────────────────────────
@@ -224,14 +227,14 @@ class ExcelReportGenerator:
         os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
         abs_path = os.path.abspath(filepath)
         wb.save(abs_path)
-        print(f"[EXCEL] Report saved to {abs_path}")
+        logger.info("[EXCEL] Report saved to %s", abs_path)
 
         if auto_open:
             try:
                 os.startfile(abs_path)
-                print(f"[EXCEL] Opening in Excel...")
+                logger.debug("[EXCEL] Opening in Excel...")
             except Exception:
-                print(f"[EXCEL] Open manually: {abs_path}")
+                logger.warning("[EXCEL] Open manually: %s", abs_path)
 
         return abs_path
 

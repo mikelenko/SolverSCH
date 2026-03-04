@@ -15,7 +15,7 @@
 - [x] 4. **Weryfikacja Modułowych Skryptów Testowych**:
   - Przenieś pozostałe skrypty np. `test_signoff.py`, `test_vin_range.py`, `test_viz.py` do właściwych katalogów (najpewniej `tests/`).
 - [x] 5. **Uruchomienie Skrytów Testowych**:
-  - `python -m pytest tests/` by zweryfikować czy reorganizacja nie naruszyła zależności modułów (np. ścieżek importu w skryptach pythonowych odwołujących się z `root`).
+  - `python -m pytest tests/` by- [x] Konfigurowalny `logging` zamiast `print()` w kluczowych modułachów (np. ścieżek importu w skryptach pythonowych odwołujących się z `root`).
 
 ---
 
