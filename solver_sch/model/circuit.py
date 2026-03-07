@@ -62,6 +62,20 @@ class VoltageSource(Component):
         return self.value
 
 
+class CurrentSource(Component):
+    """An independent ideal current source (Active).
+    
+    Current flows from node1 to node2 inside the source.
+    """
+
+    def nodes(self) -> Tuple[str, str]:
+        return self.node1, self.node2
+
+    @property
+    def current(self) -> float:
+        return self.value
+
+
 class ACVoltageSource(Component):
     """An independent ideal AC voltage source.
     

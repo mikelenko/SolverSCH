@@ -14,6 +14,7 @@ from solver_sch.model.circuit import (
     Inductor,
     VoltageSource,
     ACVoltageSource,
+    CurrentSource,
     Diode,
     BJT,
     MOSFET_N,
@@ -240,6 +241,10 @@ class NetlistParser:
                         circuit.add_component(ACVoltageSource(name, node1, node2, amp, freq))
                     else:
                         circuit.add_component(VoltageSource(name, node1, node2, cls._parse_value(parts[3])))
+                
+                # 2b. Current Sources
+                elif designator == 'I' and len(parts) >= 4:
+                    circuit.add_component(CurrentSource(name, parts[1], parts[2], cls._parse_value(parts[3])))
                 
                 # 3. Semiconductor Logic 
                 elif designator == 'D' and len(parts) >= 3:

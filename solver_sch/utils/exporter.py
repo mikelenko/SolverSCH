@@ -8,7 +8,7 @@ import os
 import logging
 from solver_sch.model.circuit import (
     Circuit, Resistor, Capacitor, Inductor,
-    VoltageSource, ACVoltageSource,
+    VoltageSource, ACVoltageSource, CurrentSource,
     Diode, BJT, MOSFET_N, MOSFET_P, OpAmp, Comparator,
 )
 
@@ -75,6 +75,10 @@ class LTspiceExporter:
                     f"SINE({comp.dc_offset} {comp.amplitude} {comp.frequency}) "
                     f"AC {comp.ac_mag} {comp.ac_phase}"
                 )
+
+            elif isinstance(comp, CurrentSource):
+                # DC current source: I<name> <n1> <n2> <value>
+                lines.append(f"I{name} {comp.node1} {comp.node2} {comp.current}")
 
             elif isinstance(comp, OpAmp):
                 # Modelujemy jako VCVS (E-element): wyjście sterowane napięciem różnicowym

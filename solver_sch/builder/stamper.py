@@ -12,7 +12,7 @@ from typing import Dict, Tuple
 import numpy as np
 from scipy.sparse import lil_matrix, csr_matrix
 
-from solver_sch.model.circuit import Circuit, Resistor, VoltageSource, ACVoltageSource, Diode, Capacitor, Inductor, BJT, MOSFET_N, MOSFET_P, OpAmp, Comparator
+from solver_sch.model.circuit import Circuit, Resistor, VoltageSource, ACVoltageSource, CurrentSource, Diode, Capacitor, Inductor, BJT, MOSFET_N, MOSFET_P, OpAmp, Comparator
 
 
 class MNAStamper:
@@ -139,6 +139,14 @@ class MNAStamper:
                 else:
                     self.z_vec[k, 0] = comp.voltage
                     
+            elif isinstance(comp, CurrentSource):
+                i = self.node_to_idx.get(comp.node1, -1)
+                j = self.node_to_idx.get(comp.node2, -1)
+                if i >= 0:
+                    self.z_vec[i, 0] -= comp.current
+                if j >= 0:
+                    self.z_vec[j, 0] += comp.current
+                    
             elif isinstance(comp, OpAmp):
                 # An Ideal OpAmp generates a branch current at its output terminal
                 # to sustain V_out = A*(V_in_p - V_in_n)
@@ -195,312 +203,15 @@ class MNAStamper:
         components = self.circuit.get_components()
         for comp in components:
             if isinstance(comp, Diode):
-                # ... fetch current iteration voltage
-                anode_idx = self.node_to_idx[comp.node1]
-                cathode_idx = self.node_to_idx[comp.node2]
-                
-                v_anode = x_prev[anode_idx] if anode_idx >= 0 else 0.0
-                v_cathode = x_prev[cathode_idx] if cathode_idx >= 0 else 0.0
-                Vd = v_anode - v_cathode
-                
-                # Zener Reverse Breakdown override
-                if getattr(comp, 'Vz', None) is not None and Vd < -comp.Vz:
-                    # Steep linear proxy for avalanche 
-                    Gz = 1e2 # More stable damping for Newton-Raphson than 1M
-                    Id = Gz * (Vd + comp.Vz)
-                    Geq = Gz
-                    Ieq = Id - Geq * Vd
-                else:
-                    nvt = getattr(comp, "n", 1.0) * comp.Vt
-                    # Limit Vd for numerical stability, scaled by ideality factor
-                    Vd_safe = min(Vd, 0.8 * getattr(comp, "n", 1.0))
-                    
-                    # Exponential forward companion model
-                    exp_val = np.exp(Vd_safe / nvt)
-                    Id = comp.Is * (exp_val - 1.0)
-                    Geq = (comp.Is / nvt) * exp_val
-                    Ieq = Id - Geq * Vd_safe
-                
-                # Map to physical Arrays
-                if anode_idx >= 0:
-                    z_nl[anode_idx, 0] -= Ieq
-                    rows.append(anode_idx)
-                    cols.append(anode_idx)
-                    data.append(Geq)
-                if cathode_idx >= 0:
-                    z_nl[cathode_idx, 0] += Ieq
-                    rows.append(cathode_idx)
-                    cols.append(cathode_idx)
-                    data.append(Geq)
-                    
-                if anode_idx >= 0 and cathode_idx >= 0:
-                    rows.append(anode_idx)
-                    cols.append(cathode_idx)
-                    data.append(-Geq)
-                    rows.append(cathode_idx)
-                    cols.append(anode_idx)
-                    data.append(-Geq)
-                    
+                self._stamp_diode(comp, x_prev, z_nl, rows, cols, data)
             elif isinstance(comp, Comparator):
-                k = self.n + self.vcvs_to_idx[comp.name]
-                p_idx = self.node_to_idx[comp.node_p]
-                n_idx = self.node_to_idx[comp.node_n]
-                
-                v_p = x_prev[p_idx] if p_idx >= 0 else 0.0
-                v_n = x_prev[n_idx] if n_idx >= 0 else 0.0
-                
-                V_diff = v_p - v_n
-                tanh_val = np.tanh(comp.k * V_diff)
-                
-                # Smooth continuous output
-                V_out_val = comp.v_low + ((comp.v_high - comp.v_low) / 2.0) * (1.0 + tanh_val)
-                
-                # Derivative: f'(V_diff)
-                f_prime = ((comp.v_high - comp.v_low) / 2.0) * comp.k * (1.0 - (tanh_val ** 2))
-                
-                # Stamp RHS
-                z_nl[k, 0] += V_out_val - (f_prime * V_diff)
-                
-                # Stamp Jacobian matrix A_nl
-                if p_idx >= 0:
-                    rows.append(k)
-                    cols.append(p_idx)
-                    data.append(-f_prime)
-                if n_idx >= 0:
-                    rows.append(k)
-                    cols.append(n_idx)
-                    data.append(f_prime)
-                    
+                self._stamp_comparator(comp, x_prev, z_nl, rows, cols, data)
             elif isinstance(comp, BJT):
-                # 1. Fetch topological pointers
-                c_idx = self.node_to_idx[comp.collector]
-                b_idx = self.node_to_idx[comp.base]
-                e_idx = self.node_to_idx[comp.emitter]
-                
-                # 2. Recreate physical terminal voltages from iteration step output
-                v_c = x_prev[c_idx] if c_idx >= 0 else 0.0
-                v_b = x_prev[b_idx] if b_idx >= 0 else 0.0
-                v_e = x_prev[e_idx] if e_idx >= 0 else 0.0
-                
-                Vbe = v_b - v_e
-                Vbc = v_b - v_c
-                
-                # 3. Secure against math explosions (Critical Non-Linear Limiting!)
-                Vbe_safe = min(Vbe, 0.8)
-                Vbc_safe = min(Vbc, 0.8)
-                
-                # 4. Math: Ebers-Moll internal Injection Equations
-                exp_vbe = np.exp(Vbe_safe / comp.Vt)
-                exp_vbc = np.exp(Vbc_safe / comp.Vt)
-                
-                I_be = (comp.Is / comp.Bf) * (exp_vbe - 1.0)
-                I_bc = (comp.Is / comp.Br) * (exp_vbc - 1.0)
-                I_ce = comp.Is * (exp_vbe - exp_vbc)
-                
-                # 5. Math: Real physical Nodal Branch Currents
-                Ib = I_be + I_bc
-                Ic = I_ce - I_bc
-                Ie = -Ib - Ic # KCL: Ie + Ib + Ic = 0
-                
-                # 6. Math: Linear partial Conductances (Jacobian Matrix partial-derivatives)
-                g_be = (comp.Is / (comp.Bf * comp.Vt)) * exp_vbe
-                g_bc = (comp.Is / (comp.Br * comp.Vt)) * exp_vbc
-                g_ce = (comp.Is / comp.Vt) * exp_vbe
-                g_ec = (comp.Is / comp.Vt) * exp_vbc
-                
-                # 7. Math: Iterative Source derivations (Newton-Raphson Companion Currents)
-                Ieq_b = Ib - (g_be * Vbe_safe + g_bc * Vbc_safe)
-                Ieq_c = Ic - (g_ce * Vbe_safe - (g_ec + g_bc) * Vbc_safe)  # Note factoring of Vbc_safe for Ic
-                Ieq_e = Ie - (- (g_be + g_ce) * Vbe_safe + g_ec * Vbc_safe)
-                
-                # 8. Render Topologies to physical Arrays (O(1) isolated matrix staging)
-                # Map Base Terminal
-                if b_idx >= 0:
-                    z_nl[b_idx, 0] -= Ieq_b
-                    # Self-Conductance
-                    rows.append(b_idx); cols.append(b_idx); data.append(g_be + g_bc)
-                    # Mutual to Emitter
-                    if e_idx >= 0:
-                        rows.append(b_idx); cols.append(e_idx); data.append(-g_be)
-                    # Mutual to Collector
-                    if c_idx >= 0:
-                        rows.append(b_idx); cols.append(c_idx); data.append(-g_bc)
-                        
-                # Map Collector Terminal
-                if c_idx >= 0:
-                    z_nl[c_idx, 0] -= Ieq_c
-                    # Mutual to Base
-                    if b_idx >= 0:
-                        rows.append(c_idx); cols.append(b_idx); data.append(g_ce - g_bc)
-                    # Mutual to Emitter
-                    if e_idx >= 0:
-                        rows.append(c_idx); cols.append(e_idx); data.append(-g_ce)
-                    # Self-Conductance
-                    rows.append(c_idx); cols.append(c_idx); data.append(g_ec + g_bc)
-                    
-                # Map Emitter Terminal
-                if e_idx >= 0:
-                    z_nl[e_idx, 0] -= Ieq_e
-                    # Mutual to Base
-                    if b_idx >= 0:
-                        rows.append(e_idx); cols.append(b_idx); data.append(-g_be - g_ce)
-                    # Self-Conductance
-                    rows.append(e_idx); cols.append(e_idx); data.append(g_be + g_ce)
-                    # Mutual to Collector
-                    if c_idx >= 0:
-                        rows.append(e_idx); cols.append(c_idx); data.append(-g_ec)
-            
+                self._stamp_bjt(comp, x_prev, z_nl, rows, cols, data)
             elif isinstance(comp, MOSFET_N):
-                # 1. Topological Pointers
-                d_idx = self.node_to_idx[comp.drain]
-                g_idx = self.node_to_idx[comp.gate]
-                s_idx = self.node_to_idx[comp.source]
-                
-                # 2. Terminal Voltages
-                v_d = x_prev[d_idx] if d_idx >= 0 else 0.0
-                v_g = x_prev[g_idx] if g_idx >= 0 else 0.0
-                v_s = x_prev[s_idx] if s_idx >= 0 else 0.0
-                
-                Vgs = v_g - v_s
-                Vds = v_d - v_s
-                
-                Id, gm, gds = 0.0, 0.0, 0.0
-                
-                # 3. Shichman-Hodges Regions
-                if Vgs <= comp.v_th:
-                    # Cutoff
-                    pass
-                elif Vds < Vgs - comp.v_th:
-                    # Linear / Triode
-                    Vov = Vgs - comp.v_th
-                    Id = comp.beta * (Vov * Vds - 0.5 * Vds**2) * (1 + comp.lambda_ * Vds)
-                    gm = comp.beta * Vds * (1 + comp.lambda_ * Vds)
-                    gds = comp.beta * (Vov - Vds) * (1 + comp.lambda_ * Vds) + comp.beta * (Vov * Vds - 0.5 * Vds**2) * comp.lambda_
-                else:
-                    # Saturation
-                    Vov = Vgs - comp.v_th
-                    # Hard limit for extremely large voltages during NR guessing
-                    Vov = min(Vov, 20.0) 
-                    Id = 0.5 * comp.beta * Vov**2 * (1 + comp.lambda_ * Vds)
-                    gm = comp.beta * Vov * (1 + comp.lambda_ * Vds)
-                    gds = 0.5 * comp.beta * Vov**2 * comp.lambda_
-                
-                # 4. Equivalent Current for NR
-                Ieq = Id - gm * Vgs - gds * Vds
-                
-                # 5. Math Mapping
-                Gmin = 1e-12
-                
-                # Gmin Gate-Source
-                if g_idx >= 0:
-                    rows.append(g_idx); cols.append(g_idx); data.append(Gmin)
-                if s_idx >= 0:
-                    rows.append(s_idx); cols.append(s_idx); data.append(Gmin)
-                if g_idx >= 0 and s_idx >= 0:
-                    rows.append(g_idx); cols.append(s_idx); data.append(-Gmin)
-                    rows.append(s_idx); cols.append(g_idx); data.append(-Gmin)
-                    
-                # Gmin Drain-Source (Critical for Cutoff floating nodes)
-                if d_idx >= 0:
-                    rows.append(d_idx); cols.append(d_idx); data.append(Gmin)
-                if s_idx >= 0:
-                    rows.append(s_idx); cols.append(s_idx); data.append(Gmin)
-                if d_idx >= 0 and s_idx >= 0:
-                    rows.append(d_idx); cols.append(s_idx); data.append(-Gmin)
-                    rows.append(s_idx); cols.append(d_idx); data.append(-Gmin)
-                    
-                if d_idx >= 0:
-                    z_nl[d_idx, 0] -= Ieq
-                    rows.append(d_idx); cols.append(d_idx); data.append(gds)
-                    if s_idx >= 0:
-                        rows.append(d_idx); cols.append(s_idx); data.append(-gds - gm)
-                    if g_idx >= 0:
-                        rows.append(d_idx); cols.append(g_idx); data.append(gm)
-                        
-                if s_idx >= 0:
-                    z_nl[s_idx, 0] += Ieq
-                    rows.append(s_idx); cols.append(s_idx); data.append(gds + gm)
-                    if d_idx >= 0:
-                        rows.append(s_idx); cols.append(d_idx); data.append(-gds)
-                    if g_idx >= 0:
-                        rows.append(s_idx); cols.append(g_idx); data.append(-gm)
-                        
+                self._stamp_nmos(comp, x_prev, z_nl, rows, cols, data)
             elif isinstance(comp, MOSFET_P):
-                # 1. Topological Pointers
-                d_idx = self.node_to_idx[comp.drain]
-                g_idx = self.node_to_idx[comp.gate]
-                s_idx = self.node_to_idx[comp.source]
-                
-                # 2. Terminal Voltages
-                v_d = x_prev[d_idx] if d_idx >= 0 else 0.0
-                v_g = x_prev[g_idx] if g_idx >= 0 else 0.0
-                v_s = x_prev[s_idx] if s_idx >= 0 else 0.0
-                
-                Vsg = v_s - v_g
-                Vsd = v_s - v_d
-                Vth_p = abs(comp.v_th) # Use absolute threshold conceptually
-                
-                Isd, gm, gds = 0.0, 0.0, 0.0
-                
-                # 3. Shichman-Hodges Regions
-                if Vsg <= Vth_p:
-                    # Cutoff
-                    pass
-                elif Vsd < Vsg - Vth_p:
-                    # Linear / Triode
-                    Vov = Vsg - Vth_p
-                    Isd = comp.beta * (Vov * Vsd - 0.5 * Vsd**2) * (1 + comp.lambda_ * Vsd)
-                    gm = comp.beta * Vsd * (1 + comp.lambda_ * Vsd)
-                    gds = comp.beta * (Vov - Vsd) * (1 + comp.lambda_ * Vsd) + comp.beta * (Vov * Vsd - 0.5 * Vsd**2) * comp.lambda_
-                else:
-                    # Saturation
-                    Vov = Vsg - Vth_p
-                    # Hard limit for NR stability
-                    Vov = min(Vov, 20.0) 
-                    Isd = 0.5 * comp.beta * Vov**2 * (1 + comp.lambda_ * Vsd)
-                    gm = comp.beta * Vov * (1 + comp.lambda_ * Vsd)
-                    gds = 0.5 * comp.beta * Vov**2 * comp.lambda_
-                
-                # 4. Equivalent Current for NR
-                Ieq = Isd - gm * Vsg - gds * Vsd
-                
-                # 5. Math Mapping (Source to Drain injection)
-                Gmin = 1e-12
-                
-                # Gmin Gate-Source
-                if g_idx >= 0:
-                    rows.append(g_idx); cols.append(g_idx); data.append(Gmin)
-                if s_idx >= 0:
-                    rows.append(s_idx); cols.append(s_idx); data.append(Gmin)
-                if g_idx >= 0 and s_idx >= 0:
-                    rows.append(g_idx); cols.append(s_idx); data.append(-Gmin)
-                    rows.append(s_idx); cols.append(g_idx); data.append(-Gmin)
-                    
-                # Gmin Drain-Source
-                if d_idx >= 0:
-                    rows.append(d_idx); cols.append(d_idx); data.append(Gmin)
-                if s_idx >= 0:
-                    rows.append(s_idx); cols.append(s_idx); data.append(Gmin)
-                if d_idx >= 0 and s_idx >= 0:
-                    rows.append(d_idx); cols.append(s_idx); data.append(-Gmin)
-                    rows.append(s_idx); cols.append(d_idx); data.append(-Gmin)
-                    
-                if s_idx >= 0:
-                    z_nl[s_idx, 0] -= Ieq
-                    rows.append(s_idx); cols.append(s_idx); data.append(gds + gm)
-                    if d_idx >= 0:
-                        rows.append(s_idx); cols.append(d_idx); data.append(-gds)
-                    if g_idx >= 0:
-                        rows.append(s_idx); cols.append(g_idx); data.append(-gm)
-                        
-                if d_idx >= 0:
-                    z_nl[d_idx, 0] += Ieq
-                    rows.append(d_idx); cols.append(d_idx); data.append(gds)
-                    if s_idx >= 0:
-                        rows.append(d_idx); cols.append(s_idx); data.append(-gds - gm)
-                    if g_idx >= 0:
-                        rows.append(d_idx); cols.append(g_idx); data.append(gm)
-                    
+                self._stamp_pmos(comp, x_prev, z_nl, rows, cols, data)
         A_nl = csr_matrix((data, (rows, cols)), shape=(size, size), dtype=float)
         return A_nl, z_nl
 
@@ -740,3 +451,310 @@ class MNAStamper:
                 k = self.n + self.vsrc_to_idx[comp.name]
                 # Inject the instantaneous wave value evaluated exactly at 't'
                 z_clone[k, 0] = comp.get_voltage(t)
+
+    def _stamp_diode(self, comp: Diode, x_prev: np.ndarray, z_nl: np.ndarray, rows: list, cols: list, data: list) -> None:
+        # ... fetch current iteration voltage
+        anode_idx = self.node_to_idx[comp.node1]
+        cathode_idx = self.node_to_idx[comp.node2]
+
+        v_anode = x_prev[anode_idx] if anode_idx >= 0 else 0.0
+        v_cathode = x_prev[cathode_idx] if cathode_idx >= 0 else 0.0
+        Vd = v_anode - v_cathode
+
+        # Zener Reverse Breakdown override
+        if getattr(comp, 'Vz', None) is not None and Vd < -comp.Vz:
+            # Steep linear proxy for avalanche 
+            Gz = 1e2 # More stable damping for Newton-Raphson than 1M
+            Id = Gz * (Vd + comp.Vz)
+            Geq = Gz
+            Ieq = Id - Geq * Vd
+        else:
+            nvt = getattr(comp, "n", 1.0) * comp.Vt
+            # Limit Vd for numerical stability, scaled by ideality factor
+            Vd_safe = min(Vd, 0.8 * getattr(comp, "n", 1.0))
+
+            # Exponential forward companion model
+            exp_val = np.exp(Vd_safe / nvt)
+            Id = comp.Is * (exp_val - 1.0)
+            Geq = (comp.Is / nvt) * exp_val
+            Ieq = Id - Geq * Vd_safe
+
+        # Map to physical Arrays
+        if anode_idx >= 0:
+            z_nl[anode_idx, 0] -= Ieq
+            rows.append(anode_idx)
+            cols.append(anode_idx)
+            data.append(Geq)
+        if cathode_idx >= 0:
+            z_nl[cathode_idx, 0] += Ieq
+            rows.append(cathode_idx)
+            cols.append(cathode_idx)
+            data.append(Geq)
+
+        if anode_idx >= 0 and cathode_idx >= 0:
+            rows.append(anode_idx)
+            cols.append(cathode_idx)
+            data.append(-Geq)
+            rows.append(cathode_idx)
+            cols.append(anode_idx)
+            data.append(-Geq)
+
+    def _stamp_comparator(self, comp: Comparator, x_prev: np.ndarray, z_nl: np.ndarray, rows: list, cols: list, data: list) -> None:
+        k = self.n + self.vcvs_to_idx[comp.name]
+        p_idx = self.node_to_idx[comp.node_p]
+        n_idx = self.node_to_idx[comp.node_n]
+
+        v_p = x_prev[p_idx] if p_idx >= 0 else 0.0
+        v_n = x_prev[n_idx] if n_idx >= 0 else 0.0
+
+        V_diff = v_p - v_n
+        tanh_val = np.tanh(comp.k * V_diff)
+
+        # Smooth continuous output
+        V_out_val = comp.v_low + ((comp.v_high - comp.v_low) / 2.0) * (1.0 + tanh_val)
+
+        # Derivative: f'(V_diff)
+        f_prime = ((comp.v_high - comp.v_low) / 2.0) * comp.k * (1.0 - (tanh_val ** 2))
+
+        # Stamp RHS
+        z_nl[k, 0] += V_out_val - (f_prime * V_diff)
+
+        # Stamp Jacobian matrix A_nl
+        if p_idx >= 0:
+            rows.append(k)
+            cols.append(p_idx)
+            data.append(-f_prime)
+        if n_idx >= 0:
+            rows.append(k)
+            cols.append(n_idx)
+            data.append(f_prime)
+
+    def _stamp_bjt(self, comp: BJT, x_prev: np.ndarray, z_nl: np.ndarray, rows: list, cols: list, data: list) -> None:
+        # 1. Fetch topological pointers
+        c_idx = self.node_to_idx[comp.collector]
+        b_idx = self.node_to_idx[comp.base]
+        e_idx = self.node_to_idx[comp.emitter]
+
+        # 2. Recreate physical terminal voltages from iteration step output
+        v_c = x_prev[c_idx] if c_idx >= 0 else 0.0
+        v_b = x_prev[b_idx] if b_idx >= 0 else 0.0
+        v_e = x_prev[e_idx] if e_idx >= 0 else 0.0
+
+        Vbe = v_b - v_e
+        Vbc = v_b - v_c
+
+        # 3. Secure against math explosions (Critical Non-Linear Limiting!)
+        Vbe_safe = min(Vbe, 0.8)
+        Vbc_safe = min(Vbc, 0.8)
+
+        # 4. Math: Ebers-Moll internal Injection Equations
+        exp_vbe = np.exp(Vbe_safe / comp.Vt)
+        exp_vbc = np.exp(Vbc_safe / comp.Vt)
+
+        I_be = (comp.Is / comp.Bf) * (exp_vbe - 1.0)
+        I_bc = (comp.Is / comp.Br) * (exp_vbc - 1.0)
+        I_ce = comp.Is * (exp_vbe - exp_vbc)
+
+        # 5. Math: Real physical Nodal Branch Currents
+        Ib = I_be + I_bc
+        Ic = I_ce - I_bc
+        Ie = -Ib - Ic # KCL: Ie + Ib + Ic = 0
+
+        # 6. Math: Linear partial Conductances (Jacobian Matrix partial-derivatives)
+        g_be = (comp.Is / (comp.Bf * comp.Vt)) * exp_vbe
+        g_bc = (comp.Is / (comp.Br * comp.Vt)) * exp_vbc
+        g_ce = (comp.Is / comp.Vt) * exp_vbe
+        g_ec = (comp.Is / comp.Vt) * exp_vbc
+
+        # 7. Math: Iterative Source derivations (Newton-Raphson Companion Currents)
+        Ieq_b = Ib - (g_be * Vbe_safe + g_bc * Vbc_safe)
+        Ieq_c = Ic - (g_ce * Vbe_safe - (g_ec + g_bc) * Vbc_safe)  # Note factoring of Vbc_safe for Ic
+        Ieq_e = Ie - (- (g_be + g_ce) * Vbe_safe + g_ec * Vbc_safe)
+
+        # 8. Render Topologies to physical Arrays (O(1) isolated matrix staging)
+        # Map Base Terminal
+        if b_idx >= 0:
+            z_nl[b_idx, 0] -= Ieq_b
+            # Self-Conductance
+            rows.append(b_idx); cols.append(b_idx); data.append(g_be + g_bc)
+            # Mutual to Emitter
+            if e_idx >= 0:
+                rows.append(b_idx); cols.append(e_idx); data.append(-g_be)
+            # Mutual to Collector
+            if c_idx >= 0:
+                rows.append(b_idx); cols.append(c_idx); data.append(-g_bc)
+
+        # Map Collector Terminal
+        if c_idx >= 0:
+            z_nl[c_idx, 0] -= Ieq_c
+            # Mutual to Base
+            if b_idx >= 0:
+                rows.append(c_idx); cols.append(b_idx); data.append(g_ce - g_bc)
+            # Mutual to Emitter
+            if e_idx >= 0:
+                rows.append(c_idx); cols.append(e_idx); data.append(-g_ce)
+            # Self-Conductance
+            rows.append(c_idx); cols.append(c_idx); data.append(g_ec + g_bc)
+
+        # Map Emitter Terminal
+        if e_idx >= 0:
+            z_nl[e_idx, 0] -= Ieq_e
+            # Mutual to Base
+            if b_idx >= 0:
+                rows.append(e_idx); cols.append(b_idx); data.append(-g_be - g_ce)
+            # Self-Conductance
+            rows.append(e_idx); cols.append(e_idx); data.append(g_be + g_ce)
+            # Mutual to Collector
+            if c_idx >= 0:
+                rows.append(e_idx); cols.append(c_idx); data.append(-g_ec)
+
+    def _stamp_nmos(self, comp: MOSFET_N, x_prev: np.ndarray, z_nl: np.ndarray, rows: list, cols: list, data: list) -> None:
+        # 1. Topological Pointers
+        d_idx = self.node_to_idx[comp.drain]
+        g_idx = self.node_to_idx[comp.gate]
+        s_idx = self.node_to_idx[comp.source]
+
+        # 2. Terminal Voltages
+        v_d = x_prev[d_idx] if d_idx >= 0 else 0.0
+        v_g = x_prev[g_idx] if g_idx >= 0 else 0.0
+        v_s = x_prev[s_idx] if s_idx >= 0 else 0.0
+
+        Vgs = v_g - v_s
+        Vds = v_d - v_s
+
+        Id, gm, gds = 0.0, 0.0, 0.0
+
+        # 3. Shichman-Hodges Regions
+        if Vgs <= comp.v_th:
+            # Cutoff
+            pass
+        elif Vds < Vgs - comp.v_th:
+            # Linear / Triode
+            Vov = Vgs - comp.v_th
+            Id = comp.beta * (Vov * Vds - 0.5 * Vds**2) * (1 + comp.lambda_ * Vds)
+            gm = comp.beta * Vds * (1 + comp.lambda_ * Vds)
+            gds = comp.beta * (Vov - Vds) * (1 + comp.lambda_ * Vds) + comp.beta * (Vov * Vds - 0.5 * Vds**2) * comp.lambda_
+        else:
+            # Saturation
+            Vov = Vgs - comp.v_th
+            # Hard limit for extremely large voltages during NR guessing
+            Vov = min(Vov, 20.0) 
+            Id = 0.5 * comp.beta * Vov**2 * (1 + comp.lambda_ * Vds)
+            gm = comp.beta * Vov * (1 + comp.lambda_ * Vds)
+            gds = 0.5 * comp.beta * Vov**2 * comp.lambda_
+
+        # 4. Equivalent Current for NR
+        Ieq = Id - gm * Vgs - gds * Vds
+
+        # 5. Math Mapping
+        Gmin = 1e-12
+
+        # Gmin Gate-Source
+        if g_idx >= 0:
+            rows.append(g_idx); cols.append(g_idx); data.append(Gmin)
+        if s_idx >= 0:
+            rows.append(s_idx); cols.append(s_idx); data.append(Gmin)
+        if g_idx >= 0 and s_idx >= 0:
+            rows.append(g_idx); cols.append(s_idx); data.append(-Gmin)
+            rows.append(s_idx); cols.append(g_idx); data.append(-Gmin)
+
+        # Gmin Drain-Source (Critical for Cutoff floating nodes)
+        if d_idx >= 0:
+            rows.append(d_idx); cols.append(d_idx); data.append(Gmin)
+        if s_idx >= 0:
+            rows.append(s_idx); cols.append(s_idx); data.append(Gmin)
+        if d_idx >= 0 and s_idx >= 0:
+            rows.append(d_idx); cols.append(s_idx); data.append(-Gmin)
+            rows.append(s_idx); cols.append(d_idx); data.append(-Gmin)
+
+        if d_idx >= 0:
+            z_nl[d_idx, 0] -= Ieq
+            rows.append(d_idx); cols.append(d_idx); data.append(gds)
+            if s_idx >= 0:
+                rows.append(d_idx); cols.append(s_idx); data.append(-gds - gm)
+            if g_idx >= 0:
+                rows.append(d_idx); cols.append(g_idx); data.append(gm)
+
+        if s_idx >= 0:
+            z_nl[s_idx, 0] += Ieq
+            rows.append(s_idx); cols.append(s_idx); data.append(gds + gm)
+            if d_idx >= 0:
+                rows.append(s_idx); cols.append(d_idx); data.append(-gds)
+            if g_idx >= 0:
+                rows.append(s_idx); cols.append(g_idx); data.append(-gm)
+
+    def _stamp_pmos(self, comp: MOSFET_P, x_prev: np.ndarray, z_nl: np.ndarray, rows: list, cols: list, data: list) -> None:
+        # 1. Topological Pointers
+        d_idx = self.node_to_idx[comp.drain]
+        g_idx = self.node_to_idx[comp.gate]
+        s_idx = self.node_to_idx[comp.source]
+
+        # 2. Terminal Voltages
+        v_d = x_prev[d_idx] if d_idx >= 0 else 0.0
+        v_g = x_prev[g_idx] if g_idx >= 0 else 0.0
+        v_s = x_prev[s_idx] if s_idx >= 0 else 0.0
+
+        Vsg = v_s - v_g
+        Vsd = v_s - v_d
+        Vth_p = abs(comp.v_th) # Use absolute threshold conceptually
+
+        Isd, gm, gds = 0.0, 0.0, 0.0
+
+        # 3. Shichman-Hodges Regions
+        if Vsg <= Vth_p:
+            # Cutoff
+            pass
+        elif Vsd < Vsg - Vth_p:
+            # Linear / Triode
+            Vov = Vsg - Vth_p
+            Isd = comp.beta * (Vov * Vsd - 0.5 * Vsd**2) * (1 + comp.lambda_ * Vsd)
+            gm = comp.beta * Vsd * (1 + comp.lambda_ * Vsd)
+            gds = comp.beta * (Vov - Vsd) * (1 + comp.lambda_ * Vsd) + comp.beta * (Vov * Vsd - 0.5 * Vsd**2) * comp.lambda_
+        else:
+            # Saturation
+            Vov = Vsg - Vth_p
+            # Hard limit for NR stability
+            Vov = min(Vov, 20.0) 
+            Isd = 0.5 * comp.beta * Vov**2 * (1 + comp.lambda_ * Vsd)
+            gm = comp.beta * Vov * (1 + comp.lambda_ * Vsd)
+            gds = 0.5 * comp.beta * Vov**2 * comp.lambda_
+
+        # 4. Equivalent Current for NR
+        Ieq = Isd - gm * Vsg - gds * Vsd
+
+        # 5. Math Mapping (Source to Drain injection)
+        Gmin = 1e-12
+
+        # Gmin Gate-Source
+        if g_idx >= 0:
+            rows.append(g_idx); cols.append(g_idx); data.append(Gmin)
+        if s_idx >= 0:
+            rows.append(s_idx); cols.append(s_idx); data.append(Gmin)
+        if g_idx >= 0 and s_idx >= 0:
+            rows.append(g_idx); cols.append(s_idx); data.append(-Gmin)
+            rows.append(s_idx); cols.append(g_idx); data.append(-Gmin)
+
+        # Gmin Drain-Source
+        if d_idx >= 0:
+            rows.append(d_idx); cols.append(d_idx); data.append(Gmin)
+        if s_idx >= 0:
+            rows.append(s_idx); cols.append(s_idx); data.append(Gmin)
+        if d_idx >= 0 and s_idx >= 0:
+            rows.append(d_idx); cols.append(s_idx); data.append(-Gmin)
+            rows.append(s_idx); cols.append(d_idx); data.append(-Gmin)
+
+        if s_idx >= 0:
+            z_nl[s_idx, 0] -= Ieq
+            rows.append(s_idx); cols.append(s_idx); data.append(gds + gm)
+            if d_idx >= 0:
+                rows.append(s_idx); cols.append(d_idx); data.append(-gds)
+            if g_idx >= 0:
+                rows.append(s_idx); cols.append(g_idx); data.append(-gm)
+
+        if d_idx >= 0:
+            z_nl[d_idx, 0] += Ieq
+            rows.append(d_idx); cols.append(d_idx); data.append(gds)
+            if s_idx >= 0:
+                rows.append(d_idx); cols.append(s_idx); data.append(-gds - gm)
+            if g_idx >= 0:
+                rows.append(d_idx); cols.append(g_idx); data.append(gm)
