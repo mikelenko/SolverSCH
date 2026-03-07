@@ -85,18 +85,21 @@ class LTspiceExporter:
                 )
 
             elif isinstance(comp, Diode):
-                lines.append(f"D{name} {comp.anode} {comp.cathode} D_MODEL")
+                model_name = getattr(comp, "model", None) or "D_MODEL"
+                lines.append(f"D{name} {comp.anode} {comp.cathode} {model_name}")
 
             elif isinstance(comp, BJT):
-                model = "NPN_MODEL" if getattr(comp, 'bjt_type', 'NPN') == 'NPN' else "PNP_MODEL"
+                default_model = "NPN_MODEL" if getattr(comp, 'bjt_type', 'NPN') == 'NPN' else "PNP_MODEL"
+                model_name = getattr(comp, "model", None) or default_model
                 lines.append(
-                    f"Q{name} {comp.collector} {comp.base} {comp.emitter} {model}"
+                    f"Q{name} {comp.collector} {comp.base} {comp.emitter} {model_name}"
                 )
 
             elif isinstance(comp, (MOSFET_N, MOSFET_P)):
-                model = "NMOS_MODEL" if isinstance(comp, MOSFET_N) else "PMOS_MODEL"
+                default_model = "NMOS_MODEL" if isinstance(comp, MOSFET_N) else "PMOS_MODEL"
+                model_name = getattr(comp, "model", None) or default_model
                 lines.append(
-                    f"M{name} {comp.drain} {comp.gate} {comp.source} {comp.source} {model}"
+                    f"M{name} {comp.drain} {comp.gate} {comp.source} {comp.source} {model_name}"
                 )
 
             elif isinstance(comp, Comparator):
@@ -108,11 +111,20 @@ class LTspiceExporter:
 
         # ── Model definitions ──────────────────────────────────────
         lines.append("")
+        
+        # Base/Default fallback models logic
         lines.append(".model D_MODEL D(Is=1e-14 n=1)")
         lines.append(".model NPN_MODEL NPN(Bf=100 Vaf=50)")
         lines.append(".model PNP_MODEL PNP(Bf=100 Vaf=50)")
         lines.append(".model NMOS_MODEL NMOS(Kp=100e-6 Vto=1)")
         lines.append(".model PMOS_MODEL PMOS(Kp=50e-6 Vto=-1)")
+
+        # Custom explicit models
+        models = circuit.get_models()
+        if models:
+            lines.append("* Custom Models from Circuit Registry:")
+            for model_name, model_card in models.items():
+                lines.append(repr(model_card))
 
         # ── Analysis command ───────────────────────────────────────
         lines.append("")

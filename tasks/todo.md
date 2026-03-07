@@ -59,3 +59,31 @@
   - Implement a recursive `flatten_hierarchy` routine to expand `X` instances.
   - Prefix internal nodes and component names with instance paths to prevent collisions.
   - Create and run `test_hierarchy.py` with a cascaded voltage divider.
+
+---
+
+# SPICE-like Component Models Architecture Plan
+
+- [x] 1. **Utworzenie i Konfiguracja `ModelCard`**:
+  - Implementacja klasy `ModelCard` w `circuit.py` do przechowywania parametrów typu NPN, D, NMOS.
+  - Rejestr modeli w obiekcie `Circuit`.
+- [x] 2. **Rozszerzenie Modeli Diody i BJT**:
+  - Dioda: obsługa `Rs`, `Cjo`, `Vj`, `M`, `tt`, `BV`, `IBV` poza starymi parametrami Ebers-Moll.
+  - BJT: wsparcie rozszerzonych parametrów Gummel-Poon (m.in. `VAF`, `VAR`, `IKF`).
+- [x] 3. **Rozszerzenie Modeli MOSFET**:
+  - Obsługa parametrów level 1/2/3 i bazowej nazwy modelu ze standardu SPICE.
+- [x] 4. **Aktualizacja backendu LTspice `LTspiceRunner`**:
+  - Generowanie dyrektyw `.model` w kodzie SPICE.
+  - Powiązanie symboli (np. `D1`, `Q1`) z nazwami zdefiniowanych wcześniej modeli.
+- [x] 5. **Weryfikacja**:
+  - Test jednostkowy dla wczytywania i nadpisywania zachowań modułowych przez `.model`.
+  - Sprawdzenie krzyżowe z symulacją SPICE (LTspice cross-validate).
+
+
+---
+# Cleanup unused files and Git imported repos
+- [x] Delete 	asks/circuitron repository
+- [x] Delete 	asks/klepcbgen repository
+- [x] Delete 	asks/pcb_circuit_generator repository
+- [x] Delete unused lib directory containing js tools
+- [x] Clean logs

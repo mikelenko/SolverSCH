@@ -8,7 +8,21 @@ Strict Rules:
 
 from abc import ABC, abstractmethod
 import math
-from typing import List, Tuple, Dict, Optional, Set
+from typing import Any, List, Tuple, Dict, Optional, Set
+
+class ModelCard:
+    """A collection of physical simulation parameters for a specific component type.
+    
+    Mimics SPICE .MODEL cards. E.g., .MODEL 1N4148 D(Is=2.52n Rs=0.568 N=1.752 ...)
+    """
+    def __init__(self, name: str, model_type: str, parameters: Dict[str, Any]):
+        self.name = name
+        self.model_type = model_type  # e.g., 'D', 'NPN', 'PNP', 'NMOS', 'PMOS'
+        self.parameters = parameters
+        
+    def __repr__(self) -> str:
+        params_str = ' '.join(f"{k}={v}" for k, v in self.parameters.items())
+        return f".model {self.name} {self.model_type}({params_str})"
 
 
 class Component(ABC):
@@ -91,10 +105,18 @@ class Diode(Component):
         Is: float = 1e-14, 
         n: float = 1.0, 
         Vt: float = 0.02585,
-        Vz: float = None
+        Vz: Optional[float] = None,
+        model: Optional[str] = None,
+        **kwargs: Any
     ) -> None:
         # We pass 0.0 as value because it doesn't hold a fixed linear value
         super().__init__(name, anode, cathode, 0.0)
+        self.Is = Is
+        self.n = n
+        self.Vt = Vt
+        self.Vz = Vz
+        self.model = model
+        self.spice_params = kwargs
         self.Is = Is
         self.n = n
         self.Vt = Vt
@@ -152,10 +174,22 @@ class BJT(Component):
     Supports complex transient switch analysis without logic-gate isolation.
     """
     
-    def __init__(self, name: str, collector: str, base: str, emitter: str, Is: float = 1e-14, Bf: float = 100.0, Br: float = 1.0, Vt: float = 0.02585) -> None:
+    def __init__(
+        self, 
+        name: str, 
+        collector: str, 
+        base: str, 
+        emitter: str, 
+        Is: float = 1e-14, 
+        Bf: float = 100.0, 
+        Br: float = 1.0, 
+        Vt: float = 0.02585,
+        model: Optional[str] = None,
+        **kwargs: Any
+    ) -> None:
         # Base Component accepts only 2-nodes for passive graph iteration.
         # BJT acts as a 3-node abstraction with null 'value'
-        super().__init__(name, collector, emitter, 0.0) 
+        super().__init__(name, collector, emitter, 0.0)
         
         self.collector = collector
         self.base = base
@@ -166,6 +200,8 @@ class BJT(Component):
         self.Bf = Bf
         self.Br = Br
         self.Vt = Vt
+        self.model = model
+        self.spice_params = kwargs
 
     def nodes(self) -> Tuple[str, str, str]:
         return self.collector, self.base, self.emitter
@@ -179,7 +215,8 @@ class MOSFET_N(Component):
     
     def __init__(self, name: str, drain: str, gate: str, source: str,
                  w: float = 1e-6, l: float = 1e-6, 
-                 v_th: float = 0.7, k_p: float = 250e-6, lambda_: float = 0.01) -> None:
+                 v_th: float = 0.7, k_p: float = 250e-6, lambda_: float = 0.01,
+                 model: Optional[str] = None, **kwargs: Any) -> None:
         super().__init__(name, drain, source, 0.0)
         self.gate = gate
         self.drain = drain
@@ -189,6 +226,8 @@ class MOSFET_N(Component):
         self.v_th = v_th
         self.k_p = k_p
         self.lambda_ = lambda_
+        self.model = model
+        self.spice_params = kwargs
         self.beta = self.k_p * (self.w / self.l)
         
     def nodes(self) -> Tuple[str, str, str]:
@@ -203,7 +242,8 @@ class MOSFET_P(Component):
     
     def __init__(self, name: str, drain: str, gate: str, source: str,
                  w: float = 1e-6, l: float = 1e-6, 
-                 v_th: float = -0.7, k_p: float = 250e-6, lambda_: float = 0.01) -> None:
+                 v_th: float = -0.7, k_p: float = 250e-6, lambda_: float = 0.01,
+                 model: Optional[str] = None, **kwargs: Any) -> None:
         super().__init__(name, drain, source, 0.0)
         self.gate = gate
         self.drain = drain
@@ -213,6 +253,8 @@ class MOSFET_P(Component):
         self.v_th = v_th
         self.k_p = k_p
         self.lambda_ = lambda_
+        self.model = model
+        self.spice_params = kwargs
         self.beta = self.k_p * (self.w / self.l)
         
     def nodes(self) -> Tuple[str, str, str]:
@@ -282,6 +324,15 @@ class Circuit:
         self.name: str = name
         self.ground_name: str = ground_name
         self._components: List[Component] = []
+        self._models: Dict[str, ModelCard] = {}
+
+    def add_model(self, model: ModelCard) -> None:
+        """Register a SPICE-like component model card."""
+        self._models[model.name] = model
+
+    def get_models(self) -> Dict[str, ModelCard]:
+        """Return all registered model cards."""
+        return self._models
 
     def add_component(self, comp: Component) -> None:
         """Register a new physical component into the network."""
@@ -384,9 +435,21 @@ class Circuit:
                     "value": c.value,
                 }
                 for c in self._components
-            ],
+            ]
         }
 
+    def draw(self, filepath: str) -> bool:
+        """
+        Render the circuit into an SVG schematic using the netlistsvg engine.
+        Requires 'npm install -g netlistsvg' to be installed on the system.
+        """
+        from solver_sch.utils.svg_exporter import SVGExporter
+        exporter = SVGExporter(self)
+        try:
+            return exporter.generate(filepath)
+        except Exception as e:
+            print(f"[Circuit Warning] Failed to draw schematic: {e}")
+            return False
 # Class Aliases for EDA Test Integrity
 NMOS = MOSFET_N
 PMOS = MOSFET_P

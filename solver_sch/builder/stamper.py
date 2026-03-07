@@ -211,13 +211,14 @@ class MNAStamper:
                     Geq = Gz
                     Ieq = Id - Geq * Vd
                 else:
-                    # Limit Vd for numerical stability
-                    Vd_safe = min(Vd, 0.8)
+                    nvt = getattr(comp, "n", 1.0) * comp.Vt
+                    # Limit Vd for numerical stability, scaled by ideality factor
+                    Vd_safe = min(Vd, 0.8 * getattr(comp, "n", 1.0))
                     
                     # Exponential forward companion model
-                    exp_val = np.exp(Vd_safe / comp.Vt)
+                    exp_val = np.exp(Vd_safe / nvt)
                     Id = comp.Is * (exp_val - 1.0)
-                    Geq = (comp.Is / comp.Vt) * exp_val
+                    Geq = (comp.Is / nvt) * exp_val
                     Ieq = Id - Geq * Vd_safe
                 
                 # Map to physical Arrays

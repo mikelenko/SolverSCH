@@ -91,6 +91,38 @@ class Simulator:
             return
 
         logger.debug("Building MNA matrices for circuit '%s'", self.circuit.name)
+        
+        # Map SPICE ModelCard parameters to numerical values in internal components
+        from solver_sch.model.circuit import Diode, BJT, MOSFET_N, MOSFET_P
+        from solver_sch.parser.netlist_parser import NetlistParser
+        
+        models = self.circuit.get_models()
+        for comp in self.circuit.get_components():
+            if hasattr(comp, "model") and getattr(comp, "model") in models:
+                mc = models[comp.model]
+                # Combine ModelCard parameters with individual component overrides
+                merged_params = {k.lower(): v for k, v in mc.parameters.items()}
+                merged_params.update({k.lower(): v for k, v in getattr(comp, "spice_params", {}).items()})
+                
+                def parse_val(v):
+                    if isinstance(v, str):
+                        try: return NetlistParser._parse_value(v)
+                        except Exception: return v
+                    return v
+                    
+                if isinstance(comp, Diode):
+                    if "is" in merged_params: comp.Is = parse_val(merged_params["is"])
+                    if "n" in merged_params: comp.n = parse_val(merged_params["n"])
+                    if "bv" in merged_params: comp.Vz = parse_val(merged_params["bv"])
+                elif isinstance(comp, BJT):
+                    if "is" in merged_params: comp.Is = parse_val(merged_params["is"])
+                    if "bf" in merged_params: comp.Bf = parse_val(merged_params["bf"])
+                    if "br" in merged_params: comp.Br = parse_val(merged_params["br"])
+                elif isinstance(comp, (MOSFET_N, MOSFET_P)):
+                    if "vto" in merged_params: comp.v_th = parse_val(merged_params["vto"])
+                    if "kp" in merged_params: comp.k_p = parse_val(merged_params["kp"])
+                    if "lambda" in merged_params: comp.lambda_ = parse_val(merged_params["lambda"])
+
         self._stamper = MNAStamper(self.circuit)
         A_lil, z_vec = self._stamper.stamp_linear()
 
