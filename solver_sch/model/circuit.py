@@ -28,62 +28,86 @@ class ModelCard:
 class Component(ABC):
     """Abstract Base Class for an electronic circuit element."""
 
-    def __init__(self, name: str, node1: str, node2: str, value: float) -> None:
+    def __init__(self, name: str) -> None:
         self.name: str = name
-        self.node1: str = node1
-        self.node2: str = node2
-        self.value: float = value
 
     @abstractmethod
-    def nodes(self) -> Tuple[str, str]:
+    def nodes(self) -> Tuple[str, ...]:
         """Return the terminals to which this component is connected."""
         pass
 
+    @property
+    def value(self) -> float:
+        """Default value for generic reporting/descriptions."""
+        return 0.0
 
-class Resistor(Component):
-    """A linear resistor element (Passive)."""
+
+class TwoTerminalPassive(Component):
+    """Base class for components with exactly two terminals and a primary numerical value."""
+    
+    def __init__(self, name: str, node1: str, node2: str, value: float) -> None:
+        super().__init__(name)
+        self.node1: str = node1
+        self.node2: str = node2
+        self._value: float = value
 
     def nodes(self) -> Tuple[str, str]:
         return self.node1, self.node2
+
+    @property
+    def value(self) -> float:
+        return self._value
+
+
+class ThreeTerminalActive(Component):
+    """Base class for active components with three primary terminals (e.g. BJT, MOSFET)."""
+    
+    def __init__(self, name: str, term1: str, term2: str, term3: str) -> None:
+        super().__init__(name)
+        self.term1: str = term1
+        self.term2: str = term2
+        self.term3: str = term3
+
+    def nodes(self) -> Tuple[str, str, str]:
+        return self.term1, self.term2, self.term3
+
+
+class Resistor(TwoTerminalPassive):
+    """A linear resistor element (Passive)."""
 
     @property
     def resistance(self) -> float:
         return self.value
 
 
-class VoltageSource(Component):
+class VoltageSource(TwoTerminalPassive):
     """An independent ideal voltage source (Active)."""
-
-    def nodes(self) -> Tuple[str, str]:
-        return self.node1, self.node2
 
     @property
     def voltage(self) -> float:
         return self.value
 
 
-class CurrentSource(Component):
+class CurrentSource(TwoTerminalPassive):
     """An independent ideal current source (Active).
     
     Current flows from node1 to node2 inside the source.
     """
-
-    def nodes(self) -> Tuple[str, str]:
-        return self.node1, self.node2
 
     @property
     def current(self) -> float:
         return self.value
 
 
-class ACVoltageSource(Component):
+class ACVoltageSource(TwoTerminalPassive):
     """An independent ideal AC voltage source.
     
     Supports Time-Domain Sine sweeps and Small-Signal AC Frequency Domain magnitude/phase setups.
     """
     
     def __init__(self, name: str, node1: str, node2: str, amplitude: float, frequency: float, dc_offset: float = 0.0, ac_mag: float = 1.0, ac_phase: float = 0.0) -> None:
-        super().__init__(name, node1, node2, 0.0) # Base value is unused
+        # Base value is set to dc_offset for reporting
+        super().__init__(name, node1, node2, dc_offset)
         # Time-domain parameters
         self.amplitude = amplitude
         self.frequency = frequency
@@ -91,9 +115,6 @@ class ACVoltageSource(Component):
         # Small-Signal frequency domain parameters
         self.ac_mag = ac_mag
         self.ac_phase = ac_phase
-
-    def nodes(self) -> Tuple[str, str]:
-        return self.node1, self.node2
 
     def get_voltage(self, t: float) -> float:
         """Returns the instantaneous voltage at time t using standard sine wave formula plus DC offset."""
@@ -105,7 +126,7 @@ class ACVoltageSource(Component):
         return self.dc_offset
 
 
-class Diode(Component):
+class Diode(TwoTerminalPassive):
     """A non-linear PN junction diode.
     
     Using standard Shockley Diode equation parameters.
@@ -123,7 +144,7 @@ class Diode(Component):
         model: Optional[str] = None,
         **kwargs: Any
     ) -> None:
-        # We pass 0.0 as value because it doesn't hold a fixed linear value
+        # Pass 0.0 as value - diodes are non-linear
         super().__init__(name, anode, cathode, 0.0)
         self.Is = Is
         self.n = n
@@ -131,13 +152,6 @@ class Diode(Component):
         self.Vz = Vz
         self.model = model
         self.spice_params = kwargs
-        self.Is = Is
-        self.n = n
-        self.Vt = Vt
-        self.Vz = Vz
-        
-    def nodes(self) -> Tuple[str, str]:
-        return self.node1, self.node2
         
     @property
     def anode(self) -> str:
@@ -148,44 +162,32 @@ class Diode(Component):
         return self.node2
 
 
-class Capacitor(Component):
+class Capacitor(TwoTerminalPassive):
     """A linear ideal capacitor element."""
-
-    def nodes(self) -> Tuple[str, str]:
-        return self.node1, self.node2
 
     @property
     def capacitance(self) -> float:
         return self.value
 
 
-class Inductor(Component):
-    """An ideal inductor component for magnetic energy storage.
-    
-    Equivalent Conductance: Geq = dt / L
-    History Current Source: Ieq = i_prev
-    """
+class Inductor(TwoTerminalPassive):
+    """An ideal inductor component for magnetic energy storage."""
     
     def __init__(self, name: str, node1: str, node2: str, inductance: float) -> None:
         super().__init__(name, node1, node2, inductance)
-        # Inductance mapped to base value
-        self.inductance = self.value
+        self.inductance = inductance
         # Internal state history
         self.i_prev: float = 0.0
-        
-    def nodes(self) -> Tuple[str, str]:
-        return self.node1, self.node2
         
     @property
     def voltage(self) -> float:
         return 0.0 # Non-applicable, operates on transient Geq/Ieq
 
 
-class BJT(Component):
+class BJT(ThreeTerminalActive):
     """An ideal NPN Bipolar Junction Transistor relying on Ebers-Moll injection model.
     
     Terminals: Collector, Base, Emitter.
-    Supports complex transient switch analysis without logic-gate isolation.
     """
     
     def __init__(
@@ -201,9 +203,7 @@ class BJT(Component):
         model: Optional[str] = None,
         **kwargs: Any
     ) -> None:
-        # Base Component accepts only 2-nodes for passive graph iteration.
-        # BJT acts as a 3-node abstraction with null 'value'
-        super().__init__(name, collector, emitter, 0.0)
+        super().__init__(name, collector, base, emitter)
         
         self.collector = collector
         self.base = base
@@ -217,21 +217,19 @@ class BJT(Component):
         self.model = model
         self.spice_params = kwargs
 
-    def nodes(self) -> Tuple[str, str, str]:
-        return self.collector, self.base, self.emitter
-        
     @property
     def voltage(self) -> float:
-        return 0.0 # Physics handled in NR Domain
+        return 0.0
 
-class MOSFET_N(Component):
+
+class MOSFET_N(ThreeTerminalActive):
     """Shichman-Hodges Level 1 NMOS Model."""
     
     def __init__(self, name: str, drain: str, gate: str, source: str,
                  w: float = 1e-6, l: float = 1e-6, 
                  v_th: float = 0.7, k_p: float = 250e-6, lambda_: float = 0.01,
                  model: Optional[str] = None, **kwargs: Any) -> None:
-        super().__init__(name, drain, source, 0.0)
+        super().__init__(name, drain, gate, source)
         self.gate = gate
         self.drain = drain
         self.source = source
@@ -244,21 +242,19 @@ class MOSFET_N(Component):
         self.spice_params = kwargs
         self.beta = self.k_p * (self.w / self.l)
         
-    def nodes(self) -> Tuple[str, str, str]:
-        return self.drain, self.gate, self.source
-        
     @property
     def voltage(self) -> float:
         return 0.0
 
-class MOSFET_P(Component):
+
+class MOSFET_P(ThreeTerminalActive):
     """Shichman-Hodges Level 1 PMOS Model."""
     
     def __init__(self, name: str, drain: str, gate: str, source: str,
                  w: float = 1e-6, l: float = 1e-6, 
                  v_th: float = -0.7, k_p: float = 250e-6, lambda_: float = 0.01,
                  model: Optional[str] = None, **kwargs: Any) -> None:
-        super().__init__(name, drain, source, 0.0)
+        super().__init__(name, drain, gate, source)
         self.gate = gate
         self.drain = drain
         self.source = source
@@ -271,44 +267,37 @@ class MOSFET_P(Component):
         self.spice_params = kwargs
         self.beta = self.k_p * (self.w / self.l)
         
-    def nodes(self) -> Tuple[str, str, str]:
-        return self.drain, self.gate, self.source
-        
     @property
     def voltage(self) -> float:
         return 0.0
 
-class OpAmp(Component):
+
+class OpAmp(ThreeTerminalActive):
     """An ideal Operational Amplifier acting as a linear VCVS (Voltage-Controlled Voltage Source).
     
     Terminals: Non-inverting (+), Inverting (-), Output.
-    Introduces a new branch current equation in the modified nodal analysis.
     """
     
     def __init__(self, name: str, in_p: str, in_n: str, out: str, gain: float = 1e5) -> None:
-        super().__init__(name, in_p, out, 0.0) 
+        super().__init__(name, in_p, in_n, out) 
         self.in_p = in_p
         self.in_n = in_n
         self.out = out
-        
         self.gain = gain
-        
-    def nodes(self) -> Tuple[str, str, str]:
-        return self.in_p, self.in_n, self.out
         
     @property
     def voltage(self) -> float:
         return 0.0
 
-class Comparator(Component):
+
+class Comparator(ThreeTerminalActive):
     """An ideal non-linear Comparator component.
     
     Terminals: Non-inverting (+), Inverting (-), Output.
-    Introduces a smooth transition for NR solveability.
     """
     
     def __init__(self, name: str, node_p: str, node_n: str, node_out: str, v_high: float = 5.0, v_low: float = 0.0, k: float = 1000.0) -> None:
-        super().__init__(name, node_p, node_out, 0.0) 
+        super().__init__(name, node_p, node_n, node_out) 
         self.node_p = node_p
         self.node_n = node_n
         self.node_out = node_out
@@ -317,22 +306,13 @@ class Comparator(Component):
         self.v_low = v_low
         self.k = k
         
-    def nodes(self) -> Tuple[str, str, str]:
-        return self.node_p, self.node_n, self.node_out
-        
     @property
     def voltage(self) -> float:
         return 0.0
 
+
 class Circuit:
-    """The central netlist/container holding nodes and components.
-    
-    Responsibilities:
-    - Maintains the list of components.
-    - Tracks and enumerates unique independent nodes.
-    - Identifies the reference datum (Ground).
-    - Contains strictly domain knowledge, ZERO matrix operations.
-    """
+    """The central netlist/container holding nodes and components."""
 
     def __init__(self, name: str = "EDA Circuit", ground_name: str = "0") -> None:
         self.name: str = name
@@ -364,25 +344,12 @@ class Circuit:
         return nodes
 
     def validate(self):
-        """Validate the circuit topology and component values.
-
-        Checks performed:
-        - Negative or zero component values (R, L, C must be positive)
-        - No voltage/AC sources (no excitation to solve)
-        - Floating nodes (nodes with only one connection — can't form a loop)
-        - Duplicate component reference names
-        - Ground node not present in the network
-
-        Returns:
-            solver_sch.results.ValidationResult with .valid, .errors, .warnings
-        """
-        # Import here to avoid circular dep at module load time
+        """Validate the circuit topology and component values."""
         from solver_sch.results import ValidationResult, ValidationError
 
         errors = []
         warnings = []
 
-        # 1. Duplicate reference names
         seen_names: Dict[str, int] = {}
         for comp in self._components:
             seen_names[comp.name] = seen_names.get(comp.name, 0) + 1
@@ -390,7 +357,6 @@ class Circuit:
             if count > 1:
                 errors.append(ValidationError("error", f"Duplicate component name '{name}' appears {count} times."))
 
-        # 2. Negative / zero values for passive components
         for comp in self._components:
             if isinstance(comp, Resistor) and comp.resistance <= 0:
                 errors.append(ValidationError("error", f"Resistor '{comp.name}' has invalid resistance={comp.resistance} Ω (must be > 0).", comp.name))
@@ -399,12 +365,10 @@ class Circuit:
             if isinstance(comp, Inductor) and comp.inductance <= 0:
                 errors.append(ValidationError("error", f"Inductor '{comp.name}' has invalid inductance={comp.inductance} H (must be > 0).", comp.name))
 
-        # 3. No voltage source (no excitation)
         has_source = any(isinstance(c, (VoltageSource, ACVoltageSource)) for c in self._components)
         if not has_source:
             warnings.append(ValidationError("warning", "No voltage source found. DC solve may return all-zero voltages."))
 
-        # 3b. No AC source — critical for AC / transient analysis
         has_ac_source = any(isinstance(c, ACVoltageSource) for c in self._components)
         if not has_ac_source:
             warnings.append(ValidationError(
@@ -413,12 +377,10 @@ class Circuit:
                 "Add: ACVoltageSource('Vin', 'in', '0', amplitude=1.0, frequency=1000) to the circuit."
             ))
 
-        # 4. Ground node not in network
         all_nodes = self.get_unique_nodes()
         if self.ground_name not in all_nodes:
             errors.append(ValidationError("error", f"Ground node '{self.ground_name}' is not connected to any component."))
 
-        # 5. Floating node detection (node appears in only one component terminal)
         from collections import Counter
         node_count: Counter = Counter()
         for comp in self._components:
@@ -432,11 +394,7 @@ class Circuit:
         return ValidationResult(valid=valid, errors=errors, warnings=warnings)
 
     def describe(self) -> dict:
-        """Return a structured human/LLM-readable description of the circuit.
-
-        Returns:
-            Dict with name, ground, component list, and unique nodes.
-        """
+        """Return a structured human/LLM-readable description of the circuit."""
         return {
             "name": self.name,
             "ground": self.ground_name,
@@ -453,10 +411,7 @@ class Circuit:
         }
 
     def draw(self, filepath: str) -> bool:
-        """
-        Render the circuit into an SVG schematic using the netlistsvg engine.
-        Requires 'npm install -g netlistsvg' to be installed on the system.
-        """
+        """Render the circuit into an SVG schematic using the netlistsvg engine."""
         from solver_sch.utils.svg_exporter import SVGExporter
         exporter = SVGExporter(self)
         try:
@@ -464,6 +419,7 @@ class Circuit:
         except Exception as e:
             print(f"[Circuit Warning] Failed to draw schematic: {e}")
             return False
+
 # Class Aliases for EDA Test Integrity
 NMOS = MOSFET_N
 PMOS = MOSFET_P

@@ -287,7 +287,7 @@ if __name__ == "__main__":
         description="Test SolverSCH Simulator with a live LLM API"
     )
     parser.add_argument(
-        "--provider", default="gemini",
+        "--provider", default="ollama",
         choices=["gemini", "openai", "anthropic", "ollama", "stub"],
         help="LLM provider to use (default: gemini)"
     )

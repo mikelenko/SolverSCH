@@ -26,8 +26,8 @@ logger = logging.getLogger("solver_sch.solver.sparse_solver")
 @dataclass
 class MNAResult:
     """Structured container for the solved MNA variables."""
-    node_voltages: Dict[str, float]
-    voltage_source_currents: Dict[str, float]
+    node_voltages: Dict[str, float | complex]
+    voltage_source_currents: Dict[str, float | complex]
     x_converged: Optional[np.ndarray] = None
 
 
@@ -268,81 +268,82 @@ class SparseSolver:
             
         return results
 
-    def simulate_ac(self, f_start: float | List[float] = 1.0, f_stop: float = 1e6, 
-                    points_per_decade: int = 10, stamper_ref: Optional[any] = None) -> Union[Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray]], List[Tuple[float, MNAResult]]]:
-        """Performs a logarithmic AC frequency sweep OR a list-based point analysis.
+    def _solve_single_ac_freq(self, freq: float, callback: Callable[[float], Tuple[sp.lil_matrix, np.ndarray]]) -> np.ndarray:
+        """Core complex matrix solver for a single AC frequency point."""
+        # Formulate Complex Linear Matrix for this frequency
+        A_ac_lil, z_ac_np = callback(freq)
         
-        Args:
-            f_start: Starting frequency (float) OR a list of frequencies to analyze.
-            f_stop: Ending frequency in Hz (if f_start is float).
-            points_per_decade: Logarithmic density (if f_start is float).
-            stamper_ref: A reference to the MNAStamper instance.
-            
-        Returns:
-            If sweep: (freqs_array, magnitudes_db_dict, phases_deg_dict)
-            If list: List[Tuple[float, MNAResult]]
-        """
-        callback = stamper_ref.stamp_ac if stamper_ref else getattr(self, 'stamper_ac', None)
-        if callback is None:
-            raise ValueError("AC Analysis requires an AC stamper callback (via stamper_ref or set_ac_stamper).")
+        # Convert and solve
+        A_ac_csr = A_ac_lil.tocsr()
+        # Gmin for stability
+        A_ac_csr.setdiag(A_ac_csr.diagonal() + 1e-12)
+        
+        try:
+            x_ac = splalg.spsolve(A_ac_csr, z_ac_np)
+            if len(x_ac.shape) > 1:
+                x_ac = x_ac.flatten()
+            return x_ac
+        except Exception as e:
+            logger.error(f"Failed to solve AC at {freq} Hz: {e}")
+            return np.zeros(self.A_lil.shape[0], dtype=np.complex128)
 
-        is_list_mode = isinstance(f_start, (list, np.ndarray))
+    def simulate_ac_sweep(self, f_start: float, f_stop: float, 
+                          points_per_decade: int = 10, stamper_ref: Optional[object] = None) -> Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+        """Performs a logarithmic AC frequency sweep, returning Bode plot data (Mag/Phase)."""
+        callback = getattr(stamper_ref, 'stamp_ac', None) if stamper_ref else getattr(self, 'stamper_ac', None)
+        if callback is None:
+            raise ValueError("AC Analysis requires an AC stamper callback.")
+
+        # 1. Generate Logarithmic Frequency Points
+        num_decades = np.log10(f_stop) - np.log10(f_start)
+        num_points = int(num_decades * points_per_decade) + 1
+        freqs = np.logspace(np.log10(f_start), np.log10(f_stop), num_points)
         
-        if is_list_mode:
-            freqs = np.array(f_start)
-        else:
-            # 1. Generate Logarithmic Frequency Points
-            num_decades = np.log10(f_stop) - np.log10(f_start)
-            num_points = int(num_decades * points_per_decade) + 1
-            freqs = np.logspace(np.log10(f_start), np.log10(f_stop), num_points)
-        
-        num_points = len(freqs)
         nodes = [node for node, idx in self.node_to_idx.items() if idx >= 0]
-        
-        # Results structures for Sweep Mode
         mags_db: Dict[str, np.ndarray] = {node: np.zeros(num_points) for node in nodes}
         phases_deg: Dict[str, np.ndarray] = {node: np.zeros(num_points) for node in nodes}
-        
-        # Results structure for List Mode
-        list_results: List[Tuple[float, MNAResult]] = []
-        
-        logger.debug("[AC Analysis] Analyzing %d points...", num_points)
-        
+
         for idx, freq in enumerate(freqs):
-            # Formulate Complex Linear Matrix for this frequency
-            A_ac_lil, z_ac_np = callback(freq)
+            x_ac = self._solve_single_ac_freq(freq, callback)
             
-            # Convert and solve
-            A_ac_csr = A_ac_lil.tocsr()
-            # Gmin for stability
-            A_ac_csr.setdiag(A_ac_csr.diagonal() + 1e-12)
-            
-            try:
-                x_ac = splalg.spsolve(A_ac_csr, z_ac_np)
-                if len(x_ac.shape) > 1:
-                    x_ac = x_ac.flatten()
-            except Exception:
-                x_ac = np.zeros(self.A_lil.shape[0], dtype=np.complex128)
-            
-            if is_list_mode:
-                voltages: Dict[str, complex] = {}
-                currents: Dict[str, complex] = {}
-                for node, n_idx in self.node_to_idx.items():
-                    voltages[node] = complex(x_ac[n_idx]) if n_idx >= 0 else 0j
-                for vsrc_name, v_idx in self.vsrc_to_idx.items():
-                    currents[vsrc_name] = complex(x_ac[self.n + v_idx])
+            # Extract Mag/Phase for all nodes
+            for node in nodes:
+                n_idx = self.node_to_idx[node]
+                val = x_ac[n_idx]
+                mags_db[node][idx] = 20 * np.log10(max(np.abs(val), 1e-20))
+                phases_deg[node][idx] = np.degrees(np.angle(val))
                 
-                mna_res = MNAResult(node_voltages=voltages, voltage_source_currents=currents)
-                mna_res.x_converged = x_ac # Ad-hoc injection for RLC tests
-                list_results.append((freq, mna_res))
-            else:
-                # Extract Mag/Phase for all nodes
-                for node in nodes:
-                    n_idx = self.node_to_idx[node]
-                    val = x_ac[n_idx]
-                    mags_db[node][idx] = 20 * np.log10(max(np.abs(val), 1e-20))
-                    phases_deg[node][idx] = np.degrees(np.angle(val))
-                    
-        if is_list_mode:
-            return list_results
         return freqs, mags_db, phases_deg
+
+    def simulate_ac_discrete(self, frequencies: List[float], 
+                             stamper_ref: Optional[object] = None) -> List[Tuple[float, MNAResult]]:
+        """Performs AC analysis at discrete frequency points, returning structured results."""
+        callback = getattr(stamper_ref, 'stamp_ac', None) if stamper_ref else getattr(self, 'stamper_ac', None)
+        if callback is None:
+            raise ValueError("AC Analysis requires an AC stamper callback.")
+
+        results: List[Tuple[float, MNAResult]] = []
+
+        for freq in frequencies:
+            x_ac = self._solve_single_ac_freq(freq, callback)
+            
+            voltages: Dict[str, complex] = {}
+            currents: Dict[str, complex] = {}
+            for node, n_idx in self.node_to_idx.items():
+                voltages[node] = complex(x_ac[n_idx]) if n_idx >= 0 else 0j
+            for vsrc_name, v_idx in self.vsrc_to_idx.items():
+                currents[vsrc_name] = complex(x_ac[self.n + v_idx])
+            
+            mna_res = MNAResult(node_voltages=voltages, voltage_source_currents=currents)
+            mna_res.x_converged = x_ac
+            results.append((freq, mna_res))
+            
+        return results
+
+    def simulate_ac(self, f_start: float | List[float] = 1.0, f_stop: float = 1e6, 
+                    points_per_decade: int = 10, stamper_ref: Optional[any] = None) -> Union[Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray]], List[Tuple[float, MNAResult]]]:
+        """Dispatch to sweep or discrete methods based on f_start type. [DEPRECATED]"""
+        if isinstance(f_start, (list, np.ndarray)):
+            return self.simulate_ac_discrete(list(f_start), stamper_ref)
+        else:
+            return self.simulate_ac_sweep(float(f_start), f_stop, points_per_decade, stamper_ref)

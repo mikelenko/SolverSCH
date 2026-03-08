@@ -40,7 +40,7 @@ class TestACAnalysis(unittest.TestCase):
         
         # We sweep from 10 Hz to 10 kHz to ensure we capture the 159Hz point
         # High resolution needed to hit exactly near fc
-        freqs, mags_db, phases_deg = solver.simulate_ac(f_start=10.0, f_stop=10000.0, points_per_decade=100, stamper_ref=stamper)
+        freqs, mags_db, phases_deg = solver.simulate_ac_sweep(f_start=10.0, f_stop=10000.0, points_per_decade=100, stamper_ref=stamper)
         
         out_mag = mags_db.get("out")
         self.assertIsNotNone(out_mag, "Failed to retrieve AC magnitude for output node.")

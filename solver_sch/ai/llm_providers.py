@@ -146,15 +146,23 @@ class OllamaProvider(LLMProvider):
     Docs: https://ollama.ai
     """
 
-    def __init__(self, model: str = "llama3", base_url: str = "http://localhost:11434") -> None:
+    def __init__(self, model: str = "qwen2.5-coder:14b", base_url: str = "http://localhost:11434", temperature: float = 0.1) -> None:
         self.model = model
         self.base_url = base_url
+        self.temperature = temperature
 
     def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
         import urllib.request
         import json
         full_prompt = f"{system_instruction}\n\n{prompt}" if system_instruction else prompt
-        payload = json.dumps({"model": self.model, "prompt": full_prompt, "stream": False}).encode()
+        payload = json.dumps({
+            "model": self.model,
+            "prompt": full_prompt,
+            "stream": False,
+            "options": {
+                "temperature": self.temperature
+            }
+        }).encode()
         req = urllib.request.Request(f"{self.base_url}/api/generate", data=payload, method="POST",
                                      headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req) as resp:
@@ -190,7 +198,7 @@ _PROVIDERS = {
 }
 
 
-def get_provider(name: str = "gemini", **kwargs) -> LLMProvider:
+def get_provider(name: str = "ollama", **kwargs) -> LLMProvider:
     """Create an LLM provider by name.
 
     Args:

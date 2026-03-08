@@ -219,8 +219,8 @@ class Simulator:
         num_points = int(num_decades * points_per_decade) + 1
         freqs = np.logspace(np.log10(f_start), np.log10(f_stop), num_points)
 
-        raw_results = self._solver.simulate_ac(
-            f_start=freqs.tolist(),
+        raw_results = self._solver.simulate_ac_discrete(
+            frequencies=freqs.tolist(),
             stamper_ref=self._stamper,
         )
 

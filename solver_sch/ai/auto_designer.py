@@ -30,15 +30,15 @@ class AutonomousDesigner:
 
     Example:
         from solver_sch.ai.llm_providers import get_provider
-        designer = AutonomousDesigner("RC 1kHz low-pass filter", llm=get_provider("stub"))
+        designer = AutonomousDesigner("RC 1kHz low-pass filter", llm=get_provider("ollama"))
         designer.run_optimization_loop()
     """
     
     def __init__(self, target_goal: str, llm: Optional[LLMProvider] = None):
         self.target_goal = target_goal
         
-        # LLM provider — defaults to Gemini, but any LLMProvider works
-        self._llm: LLMProvider = llm if llm is not None else get_provider("gemini")
+        # LLM provider — defaults to local Ollama (Qwen), but any LLMProvider works
+        self._llm: LLMProvider = llm if llm is not None else get_provider("ollama")
         
         match_dc = re.search(r"\[DC TARGET: ([\d\.]+)V\]", self.target_goal, re.IGNORECASE)
         match_ac = re.search(r"\[AC TARGET: ([\d\.]+)Hz ([\-\d\.]+)dB\]", self.target_goal, re.IGNORECASE)
@@ -331,7 +331,7 @@ if __name__ == '__main__':
         )
     
     print("=== Osobisty Projektant AI (The SolverSCH Environment) ===")
-    print("Zasilany przez Gemini 2.5 Flash. Wpisz 'exit', 'quit' lub 'q' aby wyjść.\n")
+    print("Zasilany przez lokalny model Qwen 2.5 Coder (via Ollama). Wpisz 'exit', 'quit' lub 'q' aby wyjść.\n")
     
     while True:
         try:

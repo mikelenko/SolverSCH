@@ -407,7 +407,7 @@ class ExcelReportGenerator:
         )
 
         # Run AC analysis
-        results = self._solver.simulate_ac(f_start=freqs.tolist(), stamper_ref=self._stamper)
+        results = self._solver.simulate_ac_discrete(frequencies=freqs.tolist(), stamper_ref=self._stamper)
 
         # Determine nodes (skip ground)
         _, first_mna = results[0]

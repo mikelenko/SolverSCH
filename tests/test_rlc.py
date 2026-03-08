@@ -38,7 +38,7 @@ class TestRLCTransient(unittest.TestCase):
         solver.set_ac_stamper(stamper.stamp_ac)
         
         # 1. Test exactly at theoretical resonance
-        outputs = solver.simulate_ac([f_res])
+        outputs = solver.simulate_ac_discrete([f_res])
         res_mna = outputs[0][1]
         
         idx_v1 = solver.vsrc_to_idx["V1"]
