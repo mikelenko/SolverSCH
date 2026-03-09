@@ -10,6 +10,7 @@ import logging
 import json
 import asyncio
 import aiohttp
+import base64
 from typing import Any, Dict, Optional, List
 from solver_sch.ai.system_prompts import SENIOR_REVIEWER_PROMPT
 
@@ -50,6 +51,40 @@ def tool_recalculate_opamp_gain(v_in: float, v_target: float, r_in: float) -> Di
         "Gain": float(f"{gain:.2f}"),
         "R_fb": float(f"{r_fb:.2f}")
     }
+
+async def tool_analyze_diagram(image_path: str, question: str) -> Dict[str, Any]:
+    """Analyzes an engineering diagram or datasheet excerpt using a local Vision Model (LLaVA via Ollama)."""
+    try:
+        with open(image_path, "rb") as img_file:
+            img_b64 = base64.b64encode(img_file.read()).decode('utf-8')
+    except FileNotFoundError:
+        return {"error": f"Image file {image_path} not found."}
+    
+    payload = {
+        "model": "llava",
+        "messages": [
+            {
+                "role": "user",
+                "content": "You are a hardware engineering assistant reading a datasheet diagram. " + question,
+                "images": [img_b64]
+            }
+        ],
+        "stream": False
+    }
+    
+    try:
+        # Note: We use a separate session or the one from the caller if available.
+        # Here we create a local one for simplicity as per user request.
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+            async with session.post("http://localhost:11434/api/chat", json=payload) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {"vision_analysis": data.get("message", {}).get("content", "No output")}
+                else:
+                    return {"error": f"Ollama Vision API error: {response.status}"}
+    except Exception as e:
+        return {"error": str(e)}
+    return {"error": "Unknown error in tool_analyze_diagram"}
 
 class ToolRegistry:
     """Registry for managing LLM tools and their schemas."""
@@ -110,6 +145,26 @@ REGISTRY.register(
                     "r_in": {"type": "number", "description": "Input resistor value (Ohms)"}
                 },
                 "required": ["v_in", "v_target", "r_in"]
+            }
+        }
+    }
+)
+
+REGISTRY.register(
+    "analyze_diagram",
+    tool_analyze_diagram,
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_diagram",
+            "description": "Extracts engineering data from a local image file (like a datasheet graph, pinout diagram, or internal schematic) by asking a Vision AI.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image_path": {"type": "string", "description": "Relative path to the image file, e.g., 'datasheets/LM358_pinout.png'"},
+                    "question": {"type": "string", "description": "Specific question about the diagram, e.g., 'What is pin 4 connected to?'"}
+                },
+                "required": ["image_path", "question"]
             }
         }
     }
@@ -183,9 +238,25 @@ class DesignReviewAgent:
                         for call in tool_calls:
                             func_name = call.get("function", {}).get("name")
                             args = call.get("function", {}).get("arguments", {})
-                            logger.info(f"Executing tool: {func_name}")
-                            result = REGISTRY.call(func_name, args)
-                            messages.append({"role": "tool", "content": json.dumps(result)})
+                            if func_name == "recalculate_divider":
+                                logger.info(f"Executing tool: {func_name} with args {args}")
+                                result = tool_recalculate_divider(**args)
+                                messages.append({"role": "tool", "content": json.dumps(result)})
+                            
+                            elif func_name == "recalculate_opamp_gain":
+                                logger.info(f"Executing tool: {func_name} with args {args}")
+                                result = tool_recalculate_opamp_gain(**args)
+                                messages.append({"role": "tool", "content": json.dumps(result)})
+                            
+                            elif func_name == "analyze_diagram":
+                                logger.info(f"Executing tool: {func_name} with args {args}")
+                                result = await tool_analyze_diagram(**args)
+                                messages.append({"role": "tool", "content": json.dumps(result)})
+                            
+                            else:
+                                logger.warning(f"Tool {func_name} not implemented in explicit loop.")
+                                result = {"error": f"Tool {func_name} not available in loop."}
+                                messages.append({"role": "tool", "content": json.dumps(result)})
                         
                         payload["messages"] = messages
                         async with session.post(self.ollama_url, json=payload) as final_resp:

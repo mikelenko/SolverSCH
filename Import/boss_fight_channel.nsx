@@ -1,0 +1,32 @@
+* ==========================================
+* BOSS FIGHT: Complex Sensor Signal Channel
+* ==========================================
+
+* 1. Zasilanie (OpAmp zasilany symetrycznie +/- 5V)
+V_VCC VCC 0 5.0
+V_VSS VSS 0 -5.0
+
+* 2. Sygnał z czujnika (DC 0.5V, dodajemy AC=1 dla Bode Plota i skok dla Transient)
+V_SENSOR in 0 SINE(0.5 0.1 1k) AC 1 PULSE(0.5 0.6 10u 1u 1u 5m 10m)
+
+* 3. Stopień wejściowy: Filtr RC Low-Pass (odcięcie ~15.9 kHz)
+R_FILT in Net_A 10k
+C_FILT Net_A 0 1n
+
+* 4. Stopień wzmacniający: OpAmp w konfiguracji nieodwracającej
+* Wzmocnienie: 1 + (10k / 1k) = 11. 
+* Spodziewane wyjście DC: 0.5V * 11 = 5.5V (Zbyt dużo dla MCU!)
+R_IN Net_A Net_OpAmp_Neg 1k
+R_FB out Net_OpAmp_Neg 10k
+X_U1 Net_A Net_OpAmp_Neg VCC VSS out LM358
+
+* 5. Zabezpieczenie na wyjściu do ADC (Błąd: Dioda 5.1V na szynie 3.3V)
+D_ADC 0 out BZX84C5V1
+
+* --- Modele ---
+.MODEL BZX84C5V1 D(IS=1e-15 RS=10 N=1.1 BV=5.1 IBV=1m)
+.SUBCKT LM358 IN_P IN_N V_POS V_NEG OUT
+E1 OUT 0 IN_P IN_N 100000
+.ENDS LM358
+
+.END
