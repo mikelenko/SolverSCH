@@ -129,8 +129,6 @@ class DesignReviewAgent:
         self.ollama_url = ollama_url
         self.temperature = temperature
         self.allowed_tools = allowed_tools
-        
-        self.allowed_tools = allowed_tools
 
     async def review_design_async(
         self, 
@@ -177,7 +175,8 @@ class DesignReviewAgent:
                             call_data = json.loads(json_str)
                             if "name" in call_data and "arguments" in call_data:
                                 tool_calls = [{"function": call_data}]
-                        except: pass
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            pass
 
                     if tool_calls:
                         messages.append(message)
