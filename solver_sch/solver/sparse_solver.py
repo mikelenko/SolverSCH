@@ -20,6 +20,9 @@ import scipy.sparse.linalg as splalg
 from scipy.sparse.linalg import spsolve
 import logging
 
+# SPICE-standard GMIN conductance to ground for matrix stability
+GMIN = 1e-12
+
 logger = logging.getLogger("solver_sch.solver.sparse_solver")
 
 
@@ -137,7 +140,11 @@ class SparseSolver:
             
             # 2. Numerically solve x_new = inv(A)*z
             # Inject Gmin to guarantee diagonal dominance and prevent singularities
-            A_csr.setdiag(A_csr.diagonal() + 1e-12)
+            # ONLY applied to node-portion of the matrix (indices 0 to n-1)
+            diag = A_csr.diagonal()
+            diag[:self.n] += GMIN
+            A_csr.setdiag(diag)
+            
             x_new = spsolve(A_csr, z_iter)
             
             # 3. Assess convergence vector variance
@@ -231,7 +238,11 @@ class SparseSolver:
                     z_iter = z_trans
                     
                 # Inject Gmin to prevent singular matrices from floating nodes/cutoff
-                A_csr.setdiag(A_csr.diagonal() + 1e-12)
+                # ONLY applied to node-portion of the matrix (indices 0 to n-1)
+                diag = A_csr.diagonal()
+                diag[:self.n] += GMIN
+                A_csr.setdiag(diag)
+                
                 x_new = spsolve(A_csr, z_iter)
                 
                 diff = np.max(np.abs(x_new - x_guess))
@@ -275,8 +286,10 @@ class SparseSolver:
         
         # Convert and solve
         A_ac_csr = A_ac_lil.tocsr()
-        # Gmin for stability
-        A_ac_csr.setdiag(A_ac_csr.diagonal() + 1e-12)
+        # Gmin for stability - only for nodes
+        diag = A_ac_csr.diagonal()
+        diag[:self.n] += GMIN
+        A_ac_csr.setdiag(diag)
         
         try:
             x_ac = splalg.spsolve(A_ac_csr, z_ac_np)

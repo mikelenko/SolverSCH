@@ -102,7 +102,7 @@ class NetlistParser:
         # Designators and the number of node tokens they have
         node_counts = {
             'R': 2, 'C': 2, 'L': 2, 'V': 2, 'I': 2, 'D': 2,
-            'Q': 3, 'M': 3, 'E': 3, 'U': 3
+            'Q': 3, 'M': 3, 'E': 4, 'U': 3
         }
         
         for line in subckt_def.lines:
@@ -215,6 +215,8 @@ class NetlistParser:
                 continue
                 
             name = parts[0]
+            if name.startswith('.'):
+                continue
             # Extract true physical designator even if hierarchically prefixed (e.g. 'X1.X2.R1' -> 'R')
             base_name = name.split('.')[-1]
             designator = base_name[0].upper()
@@ -231,14 +233,31 @@ class NetlistParser:
                 # 2. Voltage Sources (DC and AC "SIN" syntax)
                 elif designator == 'V' and len(parts) >= 4:
                     node1, node2 = parts[1], parts[2]
-                    if 'AC' in [p.upper() for p in parts] or 'SIN' in [p.upper() for p in parts]:
+                    parts_upper = [p.upper() for p in parts]
+                    
+                    if 'AC' in parts_upper or 'SIN' in parts_upper or 'SINE' in parts_upper:
+                        # Handle AC/SIN/SINE
                         amp_idx = 4
-                        if parts[3].upper() in ['AC', 'SIN']: amp_idx = 4
-                        else: amp_idx = parts.index('AC') + 1 if 'AC' in parts else parts.index('SIN') + 1
-                        
-                        amp = cls._parse_value(parts[amp_idx])
-                        freq = cls._parse_value(parts[amp_idx+1]) if len(parts) > amp_idx+1 else 1000.0
-                        circuit.add_component(ACVoltageSource(name, node1, node2, amp, freq))
+                        for token in ['AC', 'SIN', 'SINE']:
+                            if token in parts_upper:
+                                token_idx = parts_upper.index(token)
+                                # Next token might be the value, or it might be (val ...)
+                                if len(parts) > token_idx + 1:
+                                    val_str = parts[token_idx+1]
+                                    # Strip parentheses if SINE(0 0.1 1000)
+                                    val_str = val_str.replace('(', ' ').replace(')', ' ').split()[0]
+                                    try:
+                                        amp = cls._parse_value(val_str)
+                                        freq = cls._parse_value(parts[token_idx+2]) if len(parts) > token_idx+2 else 1000.0
+                                    except:
+                                        amp = 1.0 # Default
+                                        freq = 1000.0
+                                    circuit.add_component(ACVoltageSource(name, node1, node2, amp, freq))
+                                    break
+                    elif 'DC' in parts_upper:
+                        dc_idx = parts_upper.index('DC')
+                        val = cls._parse_value(parts[dc_idx+1]) if len(parts) > dc_idx+1 else 0.0
+                        circuit.add_component(VoltageSource(name, node1, node2, val))
                     else:
                         circuit.add_component(VoltageSource(name, node1, node2, cls._parse_value(parts[3])))
                 
@@ -248,7 +267,8 @@ class NetlistParser:
                 
                 # 3. Semiconductor Logic 
                 elif designator == 'D' and len(parts) >= 3:
-                    circuit.add_component(Diode(name, parts[1], parts[2]))
+                    m_name = parts[3] if len(parts) > 3 else None
+                    circuit.add_component(Diode(name, parts[1], parts[2], model=m_name))
                 
                 elif designator == 'Q' and len(parts) >= 4:
                     circuit.add_component(BJT(name, parts[1], parts[2], parts[3]))
@@ -272,10 +292,11 @@ class NetlistParser:
                         logger.warning("Unknown MOSFET type '%s' for %s. Defaulting to NMOS.", m_type, name)
                         circuit.add_component(MOSFET_N(name, parts[1], parts[2], parts[3], w=w_val, l=l_val))
                     
-                # 4. Op-Amp Macromodel
-                elif designator == 'E' and len(parts) >= 4:
-                    gain = cls._parse_value(parts[4]) if len(parts) > 4 else 1e5
-                    circuit.add_component(OpAmp(name, in_p=parts[2], in_n=parts[3], out=parts[1], gain=gain))
+                # 4. Op-Amp Macromodel (E designator in SPICE)
+                # Matches n+ n- nc+ nc- gain
+                elif designator == 'E' and len(parts) >= 5:
+                    gain = cls._parse_value(parts[5]) if len(parts) > 5 else 1e5
+                    circuit.add_component(OpAmp(name, in_p=parts[3], in_n=parts[4], out=parts[1], gain=gain))
                     
                 # 5. Comparator Model
                 elif designator == 'U' and len(parts) >= 4:
