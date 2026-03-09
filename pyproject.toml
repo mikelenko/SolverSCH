@@ -11,11 +11,15 @@ dependencies = [
     "pyvis",
     "networkx",
     "numpy",
-    "pytest",
     "google-genai",
     "scipy",
-    "plotly"
+    "plotly",
+    "openpyxl",
+    "aiohttp"
 ]
+
+[project.optional-dependencies]
+dev = ["pytest"]
 
 [project.scripts]
 solversch = "solver_sch.cli:main"

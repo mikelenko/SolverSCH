@@ -23,7 +23,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
 
-logger = logging.getLogger("solver_sch.llm_providers")
+logger = logging.getLogger("solver_sch.ai.llm_providers")
 
 
 class LLMProvider(ABC):

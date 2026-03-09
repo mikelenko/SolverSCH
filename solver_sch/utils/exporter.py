@@ -12,7 +12,7 @@ from solver_sch.model.circuit import (
     Diode, BJT, MOSFET_N, MOSFET_P, OpAmp, Comparator,
 )
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class LTspiceExporter:
@@ -153,5 +153,5 @@ class LTspiceExporter:
         with open(abs_path, "w", encoding="ascii", errors="replace") as f:
             f.write("\n".join(lines))
 
-        log.info("[Exporter] Written: %s (%d lines)", abs_path, len(lines))
+        logger.info("[Exporter] Written: %s (%d lines)", abs_path, len(lines))
         return abs_path

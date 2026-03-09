@@ -50,11 +50,16 @@ class AutonomousDesigner:
         self.target_max_current_ma: Optional[float] = None
         if match_current:
             self.target_max_current_ma = float(match_current.group(1))
-            
-        self.monte_carlo_runs = 0
+
+        self.monte_carlo_runs: int = 0
         if match_mc:
             self.monte_carlo_runs = int(match_mc.group(1))
-        
+
+        self.sim_mode: str
+        self.target_dc_voltage: float
+        self.target_ac_freq: float
+        self.target_ac_mag: float
+
         if match_dc:
             self.sim_mode = 'DC'
             self.target_dc_voltage = float(match_dc.group(1))
@@ -143,10 +148,10 @@ class AutonomousDesigner:
                     # Step 5: Evaluation Sweep covering target freq
                     f_start = max(1.0, self.target_ac_freq / 10.0)
                     f_stop = self.target_ac_freq * 10.0
-                    freqs, mags_db, phases_deg = solver.simulate_ac(
-                        f_start=f_start, 
-                        f_stop=f_stop, 
-                        points_per_decade=50, 
+                    freqs, mags_db, phases_deg = solver.simulate_ac_sweep(
+                        f_start=f_start,
+                        f_stop=f_stop,
+                        points_per_decade=50,
                         stamper_ref=stamper
                     )
                     
@@ -262,7 +267,7 @@ class AutonomousDesigner:
                             
                 elif mode == 'AC':
                     f_start, f_stop = self.target_ac_freq / 2.0, self.target_ac_freq * 2.0
-                    freqs, mags_db, _ = solver.simulate_ac(f_start, f_stop, 10, stamper)
+                    freqs, mags_db, _ = solver.simulate_ac_sweep(f_start, f_stop, 10, stamper)
                     idx_target = (np.abs(freqs - self.target_ac_freq)).argmin()
                     mag_at_target = mags_db.get("out", np.zeros(len(freqs)))[idx_target]
                     results.append(mag_at_target)
@@ -318,37 +323,27 @@ class AutonomousDesigner:
         return "\n".join(new_lines)
 
 if __name__ == '__main__':
-    # Interactive CLI Loop
-    żelazne_zasady = (
-            " KRYTYCZNE ZASADY ŚRODOWISKA WERYFIKACYJNEGO (SUROWY DIALEKT MNA):\n"
-            "1. Puste Płótno: Masz absolutną swobodę topologiczną. Kaskaduj komponenty i dodawaj węzły, jeśli trzeba.\n"
-            "2. Sztywne Punkty Pomiarowe: Sygnał wejściowy ZAWSZE wchodzi na węzeł 'in'. Sygnał wyjściowy ZAWSZE mierzymy na węźle 'out'. Masa to '0'.\n"
-            "3. BEZWZGLĘDNE ZASILANIE WEJŚCIA: ZAWSZE dodawaj wejściowe źródło testowe! Aby przetestować okno 9-36V, MUSISZ napisać 'V1 in 0 15' (gdzie 15 to przykładowe napięcie wewnątrz okna). Zasilanie logiki to np. 'V2 vcc 0 5'. Używaj CZYSTYCH liczb, bez słów 'DC' czy 'V'!\n"
-            "4. Modele i Hierarchia: ZABRONIONE jest używanie dyrektyw .SUBCKT oraz .model.\n"
-            "5. Składnia BJT: Bipolarne definiuj ściśle jako 'Q<nazwa> <kolektor> <baza> <emiter>'.\n"
-            "6. Komparator z Limitami: Używaj 'U<nazwa> <wy> <we+> <we-> <high> <low>'. Przykład: 'U1 out in ref 5.0 0.0'.\n"
-            "Myśl architektonicznie!"
-        )
-    
+    from solver_sch.ai.system_prompts import SOLVER_ENVIRONMENT_RULES
+
     print("=== Osobisty Projektant AI (The SolverSCH Environment) ===")
     print("Zasilany przez lokalny model Qwen 2.5 Coder (via Ollama). Wpisz 'exit', 'quit' lub 'q' aby wyjść.\n")
-    
+
     while True:
         try:
             goal_input = input("\n[CEL PROJEKTU] > ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nWyjście awaryjne. Zamykanie...")
             break
-            
+
         if not goal_input:
             continue
-            
+
         if goal_input.lower() in ('exit', 'quit', 'q'):
             print("Zamykanie środowiska projektowego. Do widzenia!")
             break
-            
+
         # Inject the mandatory hardware topologies into user prompt
-        full_prompt = goal_input + żelazne_zasady
+        full_prompt = goal_input + SOLVER_ENVIRONMENT_RULES
         
         # Initialize the automated Agent Loop
         designer_agent = AutonomousDesigner(target_goal=full_prompt)

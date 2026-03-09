@@ -249,8 +249,8 @@ class NetlistParser:
                                     try:
                                         amp = cls._parse_value(val_str)
                                         freq = cls._parse_value(parts[token_idx+2]) if len(parts) > token_idx+2 else 1000.0
-                                    except:
-                                        amp = 1.0 # Default
+                                    except (ValueError, IndexError):
+                                        amp = 1.0  # Default
                                         freq = 1000.0
                                     circuit.add_component(ACVoltageSource(name, node1, node2, amp, freq))
                                     break

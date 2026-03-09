@@ -13,8 +13,12 @@ import numpy as np
 from scipy.sparse import lil_matrix, csr_matrix
 
 from solver_sch.model.circuit import (
-    Circuit, Resistor, VoltageSource, ACVoltageSource, CurrentSource, 
+    Circuit, Resistor, VoltageSource, ACVoltageSource, CurrentSource,
     Diode, Capacitor, Inductor, BJT, MOSFET_N, MOSFET_P, OpAmp, Comparator
+)
+from solver_sch.constants import GMIN
+from solver_sch.builder.nl_stampers import (
+    stamp_diode_nl, stamp_bjt_nl, stamp_mosfet_nl, stamp_comparator_nl,
 )
 
 
@@ -53,8 +57,8 @@ class MNAStamper:
             Diode: self._stamp_diode_nl,
             Comparator: self._stamp_comparator_nl,
             BJT: self._stamp_bjt_nl,
-            MOSFET_N: self._stamp_nmos_nl,
-            MOSFET_P: self._stamp_pmos_nl,
+            MOSFET_N: self._stamp_mosfet_nl,
+            MOSFET_P: self._stamp_mosfet_nl,
         }
 
         self._map_nodes()
@@ -363,208 +367,13 @@ class MNAStamper:
     # ── Nonlinear Handler Methods ──────────────────────────────────────
 
     def _stamp_diode_nl(self, comp: Diode, x_prev: np.ndarray, z_nl: np.ndarray, rows: list, cols: list, data: list) -> None:
-        anode_idx = self.node_to_idx[comp.node1]
-        cathode_idx = self.node_to_idx[comp.node2]
-
-        v_anode = self._get_v(anode_idx, x_prev)
-        v_cathode = self._get_v(cathode_idx, x_prev)
-        Vd = v_anode - v_cathode
-
-        if getattr(comp, 'Vz', None) is not None and Vd < -comp.Vz:
-            Gz = 1e2 
-            Id = Gz * (Vd + comp.Vz)
-            Geq = Gz
-            Ieq = Id - Geq * Vd
-        else:
-            nvt = getattr(comp, "n", 1.0) * comp.Vt
-            Vd_safe = min(Vd, 0.8 * getattr(comp, "n", 1.0))
-            exp_val = np.exp(Vd_safe / nvt)
-            Id = comp.Is * (exp_val - 1.0)
-            Geq = (comp.Is / nvt) * exp_val
-            Ieq = Id - Geq * Vd_safe
-
-        if anode_idx >= 0:
-            z_nl[anode_idx, 0] -= Ieq
-            rows.append(anode_idx); cols.append(anode_idx); data.append(Geq)
-        if cathode_idx >= 0:
-            z_nl[cathode_idx, 0] += Ieq
-            rows.append(cathode_idx); cols.append(cathode_idx); data.append(Geq)
-
-        if anode_idx >= 0 and cathode_idx >= 0:
-            rows.append(anode_idx); cols.append(cathode_idx); data.append(-Geq)
-            rows.append(cathode_idx); cols.append(anode_idx); data.append(-Geq)
+        stamp_diode_nl(comp, x_prev, z_nl, rows, cols, data, self.node_to_idx, self._get_v)
 
     def _stamp_comparator_nl(self, comp: Comparator, x_prev: np.ndarray, z_nl: np.ndarray, rows: list, cols: list, data: list) -> None:
-        k = self.n + self.vcvs_to_idx[comp.name]
-        p_idx = self.node_to_idx[comp.node_p]
-        n_idx = self.node_to_idx[comp.node_n]
-
-        v_p = self._get_v(p_idx, x_prev)
-        v_n = self._get_v(n_idx, x_prev)
-
-        V_diff = v_p - v_n
-        tanh_val = np.tanh(comp.k * V_diff)
-        V_out_val = comp.v_low + ((comp.v_high - comp.v_low) / 2.0) * (1.0 + tanh_val)
-        f_prime = ((comp.v_high - comp.v_low) / 2.0) * comp.k * (1.0 - (tanh_val ** 2))
-
-        z_nl[k, 0] += V_out_val - (f_prime * V_diff)
-        if p_idx >= 0:
-            rows.append(k); cols.append(p_idx); data.append(-f_prime)
-        if n_idx >= 0:
-            rows.append(k); cols.append(n_idx); data.append(f_prime)
+        stamp_comparator_nl(comp, x_prev, z_nl, rows, cols, data, self.node_to_idx, self._get_v, self.vcvs_to_idx, self.n)
 
     def _stamp_bjt_nl(self, comp: BJT, x_prev: np.ndarray, z_nl: np.ndarray, rows: list, cols: list, data: list) -> None:
-        c_idx = self.node_to_idx[comp.collector]
-        b_idx = self.node_to_idx[comp.base]
-        e_idx = self.node_to_idx[comp.emitter]
+        stamp_bjt_nl(comp, x_prev, z_nl, rows, cols, data, self.node_to_idx, self._get_v)
 
-        v_c = self._get_v(c_idx, x_prev)
-        v_b = self._get_v(b_idx, x_prev)
-        v_e = self._get_v(e_idx, x_prev)
-
-        Vbe = v_b - v_e
-        Vbc = v_b - v_c
-        Vbe_safe = min(Vbe, 0.8)
-        Vbc_safe = min(Vbc, 0.8)
-
-        exp_vbe = np.exp(Vbe_safe / comp.Vt)
-        exp_vbc = np.exp(Vbc_safe / comp.Vt)
-
-        I_be = (comp.Is / comp.Bf) * (exp_vbe - 1.0)
-        I_bc = (comp.Is / comp.Br) * (exp_vbc - 1.0)
-        I_ce = comp.Is * (exp_vbe - exp_vbc)
-
-        Ib = I_be + I_bc
-        Ic = I_ce - I_bc
-        Ie = -Ib - Ic
-
-        g_be = (comp.Is / (comp.Bf * comp.Vt)) * exp_vbe
-        g_bc = (comp.Is / (comp.Br * comp.Vt)) * exp_vbc
-        g_ce = (comp.Is / comp.Vt) * exp_vbe
-        g_ec = (comp.Is / comp.Vt) * exp_vbc
-
-        Ieq_b = Ib - (g_be * Vbe_safe + g_bc * Vbc_safe)
-        Ieq_c = Ic - (g_ce * Vbe_safe - (g_ec + g_bc) * Vbc_safe)
-        Ieq_e = Ie - (- (g_be + g_ce) * Vbe_safe + g_ec * Vbc_safe)
-
-        if b_idx >= 0:
-            z_nl[b_idx, 0] -= Ieq_b
-            rows.append(b_idx); cols.append(b_idx); data.append(g_be + g_bc)
-            if e_idx >= 0: rows.append(b_idx); cols.append(e_idx); data.append(-g_be)
-            if c_idx >= 0: rows.append(b_idx); cols.append(c_idx); data.append(-g_bc)
-
-        if c_idx >= 0:
-            z_nl[c_idx, 0] -= Ieq_c
-            if b_idx >= 0: rows.append(c_idx); cols.append(b_idx); data.append(g_ce - g_bc)
-            if e_idx >= 0: rows.append(c_idx); cols.append(e_idx); data.append(-g_ce)
-            rows.append(c_idx); cols.append(c_idx); data.append(g_ec + g_bc)
-
-        if e_idx >= 0:
-            z_nl[e_idx, 0] -= Ieq_e
-            if b_idx >= 0: rows.append(e_idx); cols.append(b_idx); data.append(-g_be - g_ce)
-            rows.append(e_idx); cols.append(e_idx); data.append(g_be + g_ce)
-            if c_idx >= 0: rows.append(e_idx); cols.append(c_idx); data.append(-g_ec)
-
-    def _stamp_nmos_nl(self, comp: MOSFET_N, x_prev: np.ndarray, z_nl: np.ndarray, rows: list, cols: list, data: list) -> None:
-        d_idx = self.node_to_idx[comp.drain]
-        g_idx = self.node_to_idx[comp.gate]
-        s_idx = self.node_to_idx[comp.source]
-
-        v_d = self._get_v(d_idx, x_prev)
-        v_g = self._get_v(g_idx, x_prev)
-        v_s = self._get_v(s_idx, x_prev)
-
-        Vgs = v_g - v_s
-        Vds = v_d - v_s
-        Id, gm, gds = 0.0, 0.0, 0.0
-
-        if Vgs <= comp.v_th:
-            pass
-        elif Vds < Vgs - comp.v_th:
-            Vov = Vgs - comp.v_th
-            Id = comp.beta * (Vov * Vds - 0.5 * Vds**2) * (1 + comp.lambda_ * Vds)
-            gm = comp.beta * Vds * (1 + comp.lambda_ * Vds)
-            gds = comp.beta * (Vov - Vds) * (1 + comp.lambda_ * Vds) + comp.beta * (Vov * Vds - 0.5 * Vds**2) * comp.lambda_
-        else:
-            Vov = Vgs - comp.v_th
-            Vov = min(Vov, 20.0) 
-            Id = 0.5 * comp.beta * Vov**2 * (1 + comp.lambda_ * Vds)
-            gm = comp.beta * Vov * (1 + comp.lambda_ * Vds)
-            gds = 0.5 * comp.beta * Vov**2 * comp.lambda_
-
-        Ieq = Id - gm * Vgs - gds * Vds
-        self._apply_fet_matrix_stamp(d_idx, g_idx, s_idx, gm, gds, Ieq, rows, cols, data, z_nl, current_leaves_drain=True)
-
-    def _stamp_pmos_nl(self, comp: MOSFET_P, x_prev: np.ndarray, z_nl: np.ndarray, rows: list, cols: list, data: list) -> None:
-        d_idx = self.node_to_idx[comp.drain]
-        g_idx = self.node_to_idx[comp.gate]
-        s_idx = self.node_to_idx[comp.source]
-
-        v_d = self._get_v(d_idx, x_prev)
-        v_g = self._get_v(g_idx, x_prev)
-        v_s = self._get_v(s_idx, x_prev)
-
-        Vsg = v_s - v_g
-        Vsd = v_s - v_d
-        Vth_p = abs(comp.v_th)
-        Isd, gm, gds = 0.0, 0.0, 0.0
-
-        if Vsg <= Vth_p:
-            pass
-        elif Vsd < Vsg - Vth_p:
-            Vov = Vsg - Vth_p
-            Isd = comp.beta * (Vov * Vsd - 0.5 * Vsd**2) * (1 + comp.lambda_ * Vsd)
-            gm = comp.beta * Vsd * (1 + comp.lambda_ * Vsd)
-            gds = comp.beta * (Vov - Vsd) * (1 + comp.lambda_ * Vsd) + comp.beta * (Vov * Vsd - 0.5 * Vsd**2) * comp.lambda_
-        else:
-            Vov = Vsg - Vth_p
-            Vov = min(Vov, 20.0) 
-            Isd = 0.5 * comp.beta * Vov**2 * (1 + comp.lambda_ * Vsd)
-            gm = comp.beta * Vov * (1 + comp.lambda_ * Vsd)
-            gds = 0.5 * comp.beta * Vov**2 * comp.lambda_
-
-        Ieq = Isd - gm * Vsg - gds * Vsd
-        self._apply_fet_matrix_stamp(d_idx, g_idx, s_idx, gm, gds, Ieq, rows, cols, data, z_nl, current_leaves_drain=False)
-
-    def _apply_fet_matrix_stamp(self, d_idx, g_idx, s_idx, gm, gds, Ieq, rows, cols, data, z_nl, current_leaves_drain=True):
-        """Shared matrix mapping logic for both NMOS and PMOS.
-        
-        Using unified Jacobian entries for FETS where:
-        - gm links Gate to Source.
-        - gds links Drain to Source.
-        """
-        # 1. Gmin injections (identical for both to prevent floating nodes)
-        Gmin = 1e-12
-        if g_idx >= 0:
-            rows.append(g_idx); cols.append(g_idx); data.append(Gmin)
-            if s_idx >= 0:
-                rows.append(g_idx); cols.append(s_idx); data.append(-Gmin)
-        if s_idx >= 0:
-            rows.append(s_idx); cols.append(s_idx); data.append(Gmin)
-            if g_idx >= 0:
-                rows.append(s_idx); cols.append(g_idx); data.append(-Gmin)
-            if d_idx >= 0:
-                rows.append(s_idx); cols.append(d_idx); data.append(-Gmin)
-        if d_idx >= 0:
-            rows.append(d_idx); cols.append(d_idx); data.append(Gmin)
-            if s_idx >= 0:
-                rows.append(d_idx); cols.append(s_idx); data.append(-Gmin)
-
-        # 2. RHS Contribution
-        if current_leaves_drain: # NMOS: Id flows D -> S
-            if d_idx >= 0: z_nl[d_idx, 0] -= Ieq
-            if s_idx >= 0: z_nl[s_idx, 0] += Ieq
-        else: # PMOS: Isd flows S -> D
-            if s_idx >= 0: z_nl[s_idx, 0] -= Ieq
-            if d_idx >= 0: z_nl[d_idx, 0] += Ieq
-
-        # 3. Jacobian (Jacobian entries are symmetrical in structure for NMOS:Id and PMOS:Isd)
-        if d_idx >= 0:
-            rows.append(d_idx); cols.append(d_idx); data.append(gds)
-            if s_idx >= 0: rows.append(d_idx); cols.append(s_idx); data.append(-gds - gm)
-            if g_idx >= 0: rows.append(d_idx); cols.append(g_idx); data.append(gm)
-
-        if s_idx >= 0:
-            rows.append(s_idx); cols.append(s_idx); data.append(gds + gm)
-            if d_idx >= 0: rows.append(s_idx); cols.append(d_idx); data.append(-gds)
-            if g_idx >= 0: rows.append(s_idx); cols.append(g_idx); data.append(-gm)
+    def _stamp_mosfet_nl(self, comp, x_prev: np.ndarray, z_nl: np.ndarray, rows: list, cols: list, data: list) -> None:
+        stamp_mosfet_nl(comp, x_prev, z_nl, rows, cols, data, self.node_to_idx, self._get_v)

@@ -16,12 +16,10 @@ import numpy as np
 import scipy.sparse as sp
 from scipy.sparse import lil_matrix, csr_matrix
 import scipy.sparse.linalg as splalg
-import scipy.sparse.linalg as splalg
 from scipy.sparse.linalg import spsolve
 import logging
 
-# SPICE-standard GMIN conductance to ground for matrix stability
-GMIN = 1e-12
+from solver_sch.constants import GMIN, NR_MAX_ITER_DC, NR_MAX_ITER_TRANSIENT, NR_TOLERANCE
 
 logger = logging.getLogger("solver_sch.solver.sparse_solver")
 
@@ -117,8 +115,8 @@ class SparseSolver:
         if size == 0:
             return MNAResult({}, {})
 
-        max_iter = 100
-        tol = 1e-6
+        max_iter = NR_MAX_ITER_DC
+        tol = NR_TOLERANCE
         x = np.zeros(size, dtype=float)
 
         # Non-Linear Newton Raphson Loop
@@ -198,8 +196,8 @@ class SparseSolver:
         x_prev = np.zeros(size, dtype=float)
         
         # Max NR limits
-        max_iter = 50
-        tol = 1e-6
+        max_iter = NR_MAX_ITER_TRANSIENT
+        tol = NR_TOLERANCE
         
         # PERFORMANCE: A_trans basis is entirely independent of time integration variants.
         # Stamp `dt / L` and `C / dt` explicitly ONLY ONCE and extract the rigid CSR form.
@@ -353,10 +351,3 @@ class SparseSolver:
             
         return results
 
-    def simulate_ac(self, f_start: float | List[float] = 1.0, f_stop: float = 1e6, 
-                    points_per_decade: int = 10, stamper_ref: Optional[any] = None) -> Union[Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray]], List[Tuple[float, MNAResult]]]:
-        """Dispatch to sweep or discrete methods based on f_start type. [DEPRECATED]"""
-        if isinstance(f_start, (list, np.ndarray)):
-            return self.simulate_ac_discrete(list(f_start), stamper_ref)
-        else:
-            return self.simulate_ac_sweep(float(f_start), f_stop, points_per_decade, stamper_ref)

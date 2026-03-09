@@ -32,6 +32,7 @@ from solver_sch.model.circuit import (
     Inductor,
     VoltageSource,
     ACVoltageSource,
+    CurrentSource,
     Diode,
     BJT,
     MOSFET_N,
@@ -73,7 +74,7 @@ __all__ = [
     # Domain model
     "Circuit", "Component",
     "Resistor", "Capacitor", "Inductor",
-    "VoltageSource", "ACVoltageSource",
+    "VoltageSource", "ACVoltageSource", "CurrentSource",
     "Diode", "BJT", "MOSFET_N", "MOSFET_P", "NMOS", "PMOS", "NPN",
     "OpAmp", "Comparator",
     # Facade
