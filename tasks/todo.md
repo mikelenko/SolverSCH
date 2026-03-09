@@ -87,3 +87,22 @@
 - [x] Delete 	asks/pcb_circuit_generator repository
 - [x] Delete unused lib directory containing js tools
 - [x] Clean logs
+
+---
+# Refaktoryzacja SolverSCH (~5500 LOC) — Plan Modularny
+
+- [x] **Faza 0** — Chirurgiczny Cleanup (duplikaty importów, bare excepts, deprecated `simulate_ac()`, logger naming, `CurrentSource` w `__init__.py`, `pyproject.toml`)
+- [x] **Faza 1** — Ekstrakcja Stałych (`solver_sch/constants.py`: THERMAL_VOLTAGE, GMIN, NR_MAX_ITER_*, NR_TOLERANCE, DIODE_VD_LIMIT); podłączenie konsumentów; ekstrakcja `SOLVER_ENVIRONMENT_RULES` do `system_prompts.py`
+- [x] **Faza 2** — Normalizacja Nazewnictwa (`@property` zamiast zdublowanych atrybutów w BJT, MOSFET_N/P, OpAmp, Comparator)
+- [x] **Faza 3** — Podział Plików (split `circuit.py` → `components.py` + `circuit.py`; ekstrakcja nl_stampers → `builder/nl_stampers.py`)
+- [x] **Faza 4** — Error Handling & Type Hints (bare except w `netlist_parser.py`, type annotations w `AutonomousDesigner`)
+- [x] **Faza 5** — Konsolidacja MOSFET DRY (`_MOSFETBase` z `_polarity`; unified `stamp_mosfet_nl`)
+
+Wynik końcowy: 45/45 testów zielonych po każdej fazie.
+
+---
+# SignalAnalyzer — Pre-processor dla DesignReviewAgent
+
+- [x] Utworzenie `solver_sch/utils/signal_analyzer.py` (`extract_ac_metrics`, `extract_transient_metrics`)
+- [x] Aktualizacja `SENIOR_REVIEWER_PROMPT` — dodanie sekcji "5. DYNAMICS & STABILITY"
+- [x] 45/45 testów zielonych

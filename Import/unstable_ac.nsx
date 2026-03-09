@@ -1,0 +1,17 @@
+* Unstable AC Circuit - Phase Margin Test
+* Wymuszenie małosygnałowe AC o amplitudzie 1V
+V_IN in 0 AC 1
+
+* Rezystancja pasożytnicza celowo zaniżona (Q = wysokie)
+R_LOSS in Net_L 0.1
+
+* Główny obwód rezonansowy
+L_RESON Net_L out 10u
+C_RESON out 0 100n
+
+* Zabezpieczenie na wyjściu (dla AI do zignorowania)
+D_PROT 0 out BZX84C5V1
+.MODEL BZX84C5V1 D(IS=1e-15 RS=10 N=1.1 BV=5.1 IBV=1m)
+
+.AC dec 50 1k 10meg
+.END

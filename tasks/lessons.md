@@ -54,6 +54,15 @@ W metodzie ładującej modele nieliniowe do macierzy (`stamp_nonlinear`), nałó
 **Wzorzec bledu:** Uzywanie `.*?</g>` z flaga `re.DOTALL` w pythonie przy parsowaniu plikow SVG z netlistsvg (ELK) doprowadza do wykladniczego czasu wykonania RegExp i zawieszenia narzedzia Exporter.
 **Rozwiazanie:** Przy wyciaganiu koordynatow unikaj wylapywania calej zawartosci grupy. Parsuj wylacznie tagi otwierajace, np. `re.finditer(r'<g([^>]+id="([^"]+)"[^>]*)>', content)`. Dzieki temu parser wykonuje sie bledyskawicznie w czasie O(N).
 
+## 2026-03-09 Przestrzeganie CLAUDE.md — Luki w Workflow
+
+**Problem:** Podczas dużej sesji refaktoryzacji (Faza 0–5) plan trafił do `.claude/plans/` zamiast do `tasks/todo.md`. Plik `tasks/lessons.md` nie był aktualizowany na bieżąco po sesjach. CLAUDE.md był stosowany częściowo — plan mode, subagenty, testy po każdej fazie — ale ślad pisemny w `tasks/` był zaniedbany.
+
+**Rozwiązanie (Zasada żelazna):**
+- Po zakończeniu każdego większego zadania zawsze dopisz wpis do `tasks/todo.md` (co zrobiono) i `tasks/lessons.md` (co się nauczono).
+- Plan tryb (`EnterPlanMode`) → zapis planu w `.claude/plans/` jest OK dla struktury Claude, ale TAKŻE należy dodać checklistę do `tasks/todo.md` zanim zacznie się implementacja.
+- Przy starcie sesji: przeczytaj `tasks/lessons.md` zanim zaczniesz cokolwiek nowego.
+
 ## 6. ELK Partitioning Infinite Loop Crash
 **Wzorzec bledu:** Nadpisywanie wektorow wejscia s:position (np. s:position="right" dla kolektora NPN) wewnatrz netlistsvg w polaczeniu z narzucaniem limitow partycjonowania silnika (org.eclipse.elk.partitioning) powoduje infinite loop wewnatrz procesu node.js.
 **Rozwiazanie:** Komponenty SVG skoryguj zostawiajac oryginalne `s:position="top"` dla ELKa, a przesuniecia lub grupowania blokow (np. sily ciagnace zasilanie zawsze na lewo) implementuj post-factum (np. przesuniecie bezwzgledne w osi X po zakonczeniu dzialania ELKa).

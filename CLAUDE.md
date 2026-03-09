@@ -1,5 +1,11 @@
 # Project Rules
 
+## MANDATORY SESSION STARTUP
+> Do this BEFORE any other action, every session:
+> 1. `Read tasks/lessons.md` — iron rules from past mistakes
+> 2. `Read tasks/todo.md` — current state
+> 3. Write implementation plan to `tasks/todo.md` before touching code
+
 ## Workflow Orchestration
 
 ### 1. Plan Mode Default

@@ -1,0 +1,17 @@
+* Underdamped RLC Filter - Transient Stability Test
+* Wymuszenie skokiem napięcia 0V -> 3.3V
+V_STEP in 0 PULSE(0 3.3 10u 1u 1u 5m 10m)
+
+* Bardzo mała rezystancja (1 Ohm) = brak tłumienia
+R_DAMP in Net_L 1
+
+* Elementy reaktancyjne (L i C)
+L_FILT Net_L out 10u
+C_FILT out 0 100n
+
+* Zabezpieczenie na wyjściu (dla zmyłki)
+D_PROT 0 out BZX84C5V1
+.MODEL BZX84C5V1 D(IS=1e-15 RS=10 N=1.1 BV=5.1 IBV=1m)
+
+.TRAN 100n 1m
+.END
