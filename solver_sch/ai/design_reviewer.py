@@ -61,14 +61,9 @@ async def tool_analyze_diagram(image_path: str, question: str) -> Dict[str, Any]
         return {"error": f"Image file {image_path} not found."}
     
     payload = {
-        "model": "llava",
-        "messages": [
-            {
-                "role": "user",
-                "content": "You are a hardware engineering assistant reading a datasheet diagram. " + question,
-                "images": [img_b64]
-            }
-        ],
+        "model": "moondream",
+        "prompt": f"Analyze this engineering diagram/datasheet. Question: {question}",
+        "images": [img_b64],
         "stream": False
     }
     
