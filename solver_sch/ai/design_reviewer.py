@@ -1,299 +1,197 @@
 """
-design_reviewer.py -> Automated Schematic Design Review Agent for SolverSCH.
+design_reviewer.py — Public facade for the DesignReviewAgent.
 
-Uses a local LLM (Qwen 2.5 Coder) via Ollama to perform high-level engineering 
-code reviews based on deterministic simulation results from the solver.
-Supports Tool Calling for mathematical recalculations.
+All heavy implementation lives in the sub-modules:
+  tools.py        — tool functions, ToolRegistry, REGISTRY
+  llm_backends.py — LLMClient (Ollama + Gemini)
+  agent.py        — run_review() two-phase loop
+
+Backward-compatible re-exports keep existing imports working unchanged.
 """
 
-import logging
 import json
-import asyncio
-import aiohttp
-import base64
-from typing import Any, Dict, Optional, List
+import logging
+import os
+from typing import Any, Dict, List, Optional
+
 from solver_sch.ai.system_prompts import SENIOR_REVIEWER_PROMPT
+
+# ── Backward-compatible re-exports ───────────────────────────────────────────
+from solver_sch.ai.tools import (  # noqa: F401
+    DATASHEETS_DIR,
+    HAS_PDF_DEPS,
+    REGISTRY,
+    ToolRegistry,
+    _datasheet_cache,
+    tool_analyze_diagram,
+    tool_query_datasheet,
+    tool_recalculate_divider,
+    tool_recalculate_opamp_gain,
+)
+from solver_sch.ai.llm_backends import LLMClient  # noqa: F401
+from solver_sch.ai.agent import run_review  # noqa: F401
+
+# fitz re-export so existing patches on "solver_sch.ai.design_reviewer.fitz" still resolve
+try:
+    import fitz  # noqa: F401
+except ImportError:
+    fitz = None  # type: ignore[assignment]
 
 logger = logging.getLogger("solver_sch.ai.design_reviewer")
 
-def tool_recalculate_divider(v_in: float, v_target: float, max_current: float) -> Dict[str, Any]:
-    """Calculates ideal resistor values for a voltage divider."""
-    if max_current <= 0:
-        return {"error": "max_current must be positive"}
-    if v_in <= 0:
-        return {"error": "v_in must be positive to calculate a divider"}
-    
-    r_total = float(v_in / max_current)
-    r2 = float((v_target / v_in) * r_total)
-    r1 = r_total - r2
-    
-    return {
-        "R1": float(f"{r1:.2f}"),
-        "R2": float(f"{r2:.2f}"),
-        "R_total": float(f"{r_total:.2f}")
-    }
-
-def tool_recalculate_opamp_gain(v_in: float, v_target: float, r_in: float) -> Dict[str, Any]:
-    """Calculates Rf value for a non-inverting OpAmp gain stage.
-    Formula: Gain = 1 + (Rf / Rin) -> Rf = Rin * (Gain - 1)
-    """
-    if v_in <= 0:
-        return {"error": "v_in must be positive"}
-    if v_target < v_in:
-        return {"error": "Target voltage must be >= input voltage for a non-inverting amplifier"}
-    if r_in <= 0:
-        return {"error": "r_in must be positive"}
-
-    gain = v_target / v_in
-    r_fb = r_in * (gain - 1)
-
-    return {
-        "Gain": float(f"{gain:.2f}"),
-        "R_fb": float(f"{r_fb:.2f}")
-    }
-
-async def tool_analyze_diagram(image_path: str, question: str) -> Dict[str, Any]:
-    """Analyzes an engineering diagram or datasheet excerpt using a local Vision Model (LLaVA via Ollama)."""
-    try:
-        with open(image_path, "rb") as img_file:
-            img_b64 = base64.b64encode(img_file.read()).decode('utf-8')
-    except FileNotFoundError:
-        return {"error": f"Image file {image_path} not found."}
-    
-    payload = {
-        "model": "moondream",
-        "prompt": f"Analyze this engineering diagram/datasheet. Question: {question}",
-        "images": [img_b64],
-        "stream": False
-    }
-    
-    try:
-        # Note: We use a separate session or the one from the caller if available.
-        # Here we create a local one for simplicity as per user request.
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
-            async with session.post("http://localhost:11434/api/chat", json=payload) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return {"vision_analysis": data.get("message", {}).get("content", "No output")}
-                else:
-                    return {"error": f"Ollama Vision API error: {response.status}"}
-    except Exception as e:
-        return {"error": str(e)}
-    return {"error": "Unknown error in tool_analyze_diagram"}
-
-class ToolRegistry:
-    """Registry for managing LLM tools and their schemas."""
-    
-    def __init__(self):
-        self._tools: Dict[str, Dict[str, Any]] = {}
-
-    def register(self, name: str, func: Any, schema: Dict[str, Any]):
-        self._tools[name] = {"func": func, "schema": schema}
-
-    def get_schemas(self, allowed_tools: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        if allowed_tools is None:
-            return [t["schema"] for t in self._tools.values()]
-        return [self._tools[name]["schema"] for name in allowed_tools if name in self._tools]
-
-    def call(self, name: str, kwargs: Dict[str, Any]) -> Any:
-        if name not in self._tools:
-            return {"error": f"Tool '{name}' not found in registry."}
-        return self._tools[name]["func"](**kwargs)
-
-# Global Registry Instance
-REGISTRY = ToolRegistry()
-
-REGISTRY.register(
-    "recalculate_divider",
-    tool_recalculate_divider,
-    {
-        "type": "function",
-        "function": {
-            "name": "recalculate_divider",
-            "description": "Recalculate R1 and R2 values for a voltage divider to reach a target voltage within current limits.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "v_in": {"type": "number", "description": "Input voltage (V)"},
-                    "v_target": {"type": "number", "description": "Target output voltage (V)"},
-                    "max_current": {"type": "number", "description": "Maximum allowed input current (A)"}
-                },
-                "required": ["v_in", "v_target", "max_current"]
-            }
-        }
-    }
-)
-
-REGISTRY.register(
-    "recalculate_opamp_gain",
-    tool_recalculate_opamp_gain,
-    {
-        "type": "function",
-        "function": {
-            "name": "recalculate_opamp_gain",
-            "description": "Calculates the feedback resistor (Rf) for a non-inverting OpAmp stage based on input/target voltage and input resistor (Rin).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "v_in": {"type": "number", "description": "Input voltage to the stage (V)"},
-                    "v_target": {"type": "number", "description": "Desired output voltage (V)"},
-                    "r_in": {"type": "number", "description": "Input resistor value (Ohms)"}
-                },
-                "required": ["v_in", "v_target", "r_in"]
-            }
-        }
-    }
-)
-
-REGISTRY.register(
-    "analyze_diagram",
-    tool_analyze_diagram,
-    {
-        "type": "function",
-        "function": {
-            "name": "analyze_diagram",
-            "description": "Extracts engineering data from a local image file (like a datasheet graph, pinout diagram, or internal schematic) by asking a Vision AI.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "image_path": {"type": "string", "description": "Relative path to the image file, e.g., 'datasheets/LM358_pinout.png'"},
-                    "question": {"type": "string", "description": "Specific question about the diagram, e.g., 'What is pin 4 connected to?'"}
-                },
-                "required": ["image_path", "question"]
-            }
-        }
-    }
-)
 
 class DesignReviewAgent:
-    """Automated Agent for reviewing circuit designs based on simulation data."""
+    """Automated Agent for reviewing circuit designs based on simulation data.
+
+    Supports two backends:
+      - "ollama": Local model via Ollama /api/chat
+      - "gemini": Google Gemini API (requires GEMINI_API_KEY)
+    """
 
     def __init__(
-        self, 
-        model: str = "qwen2.5-coder:14b", 
+        self,
+        model: str = "gemini-3.1-flash-lite-preview",
         ollama_url: str = "http://localhost:11434/api/chat",
         temperature: float = 0.2,
-        allowed_tools: Optional[List[str]] = None
+        allowed_tools: Optional[List[str]] = None,
+        backend: str = "gemini",
     ):
         self.model = model
         self.ollama_url = ollama_url
         self.temperature = temperature
         self.allowed_tools = allowed_tools
+        self.backend = backend.lower()
+        self._gemini_client = None
+
+        if self.backend == "gemini":
+            api_key = os.environ.get("GEMINI_API_KEY")
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY environment variable is not set.")
+            from google import genai
+            self._gemini_client = genai.Client(api_key=api_key)
+            # Share client + model with vision tool
+            import solver_sch.ai.tools as _tools
+            _tools._vision_gemini_client = self._gemini_client
+            _tools._vision_model = self.model
+
+        self._llm_client = LLMClient(
+            model=self.model,
+            ollama_url=self.ollama_url,
+            temperature=self.temperature,
+            backend=self.backend,
+            gemini_client=self._gemini_client,
+        )
 
     async def review_design_async(
-        self, 
-        circuit_info: Any, 
-        sim_results: Any, 
-        task_intent: str
+        self,
+        circuit_info: Any,
+        sim_results: Any,
+        task_intent: str,
     ) -> str:
-        user_content = self._format_prompt(circuit_info, sim_results, task_intent)
+        """Delegate to agent.run_review() after building the initial messages."""
+        user_context = self._format_prompt(circuit_info, sim_results, task_intent)
         messages = [
             {"role": "system", "content": SENIOR_REVIEWER_PROMPT},
-            {"role": "user", "content": user_content}
+            {"role": "user", "content": user_context},
         ]
-        
-        options = {
-            "temperature": 0.1,
-            "num_ctx": 4096,
-            "num_thread": 6
-        }
-        
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as session:
-                payload = {
-                    "model": self.model,
-                    "messages": messages,
-                    "tools": REGISTRY.get_schemas(self.allowed_tools),
-                    "stream": False,
-                    "options": options
-                }
-                
-                logger.info(f"Sending request to Ollama ({self.model})...")
-                async with session.post(self.ollama_url, json=payload) as response:
-                    if response.status != 200:
-                        return f"ERROR: Ollama status {response.status}"
-                    
-                    data = await response.json()
-                    message = data.get("message", {})
-                    content = message.get("content", "")
-                    tool_calls = message.get("tool_calls", [])
-                    
-                    # Fallback JSON parsing
-                    if not tool_calls and "```json" in content:
-                        try:
-                            json_str = content.split("```json")[-1].split("```")[0].strip()
-                            call_data = json.loads(json_str)
-                            if "name" in call_data and "arguments" in call_data:
-                                tool_calls = [{"function": call_data}]
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            pass
+        return await run_review(
+            llm_client=self._llm_client,
+            messages=messages,
+            registry=REGISTRY,
+            allowed_tools=self.allowed_tools,
+        )
 
-                    if tool_calls:
-                        messages.append(message)
-                        for call in tool_calls:
-                            func_name = call.get("function", {}).get("name")
-                            args = call.get("function", {}).get("arguments", {})
-                            if func_name == "recalculate_divider":
-                                logger.info(f"Executing tool: {func_name} with args {args}")
-                                result = tool_recalculate_divider(**args)
-                                messages.append({"role": "tool", "content": json.dumps(result)})
-                            
-                            elif func_name == "recalculate_opamp_gain":
-                                logger.info(f"Executing tool: {func_name} with args {args}")
-                                result = tool_recalculate_opamp_gain(**args)
-                                messages.append({"role": "tool", "content": json.dumps(result)})
-                            
-                            elif func_name == "analyze_diagram":
-                                logger.info(f"Executing tool: {func_name} with args {args}")
-                                result = await tool_analyze_diagram(**args)
-                                messages.append({"role": "tool", "content": json.dumps(result)})
-                            
-                            else:
-                                logger.warning(f"Tool {func_name} not implemented in explicit loop.")
-                                result = {"error": f"Tool {func_name} not available in loop."}
-                                messages.append({"role": "tool", "content": json.dumps(result)})
-                        
-                        payload["messages"] = messages
-                        async with session.post(self.ollama_url, json=payload) as final_resp:
-                            data = await final_resp.json()
-                            return data.get("message", {}).get("content", "ERROR")
-                    
-                    return content or "ERROR: No content"
-        
-        except aiohttp.ClientConnectorError:
-            return "ERROR: Could not connect to Ollama server."
-        except asyncio.TimeoutError:
-            return "ERROR: AI review timed out (300s)."
-        except Exception as e:
-            return f"ERROR: Unexpected error: {str(e)}"
+    @staticmethod
+    def _safe_json(obj: Any, **kwargs: Any) -> str:
+        """JSON-serialize with numpy/complex type support."""
+        import numpy as _np
 
-    def _format_prompt(self, circuit_info: Dict[str, Any], sim_results: Dict[str, Any], task_intent: str) -> str:
+        def _default(o: Any) -> Any:
+            if isinstance(o, _np.integer):
+                return int(o)
+            if isinstance(o, _np.floating):
+                return float(o)
+            if isinstance(o, _np.complexfloating):
+                return {"re": float(o.real), "im": float(o.imag)}
+            if isinstance(o, _np.ndarray):
+                return o.tolist()
+            raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+        return json.dumps(obj, default=_default, **kwargs)
+
+    def _load_component_cards(self, circuit_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Load .card.json files for ICs found in the BOM."""
+        if not os.path.isdir(DATASHEETS_DIR):
+            return {}
+
+        bom: List[Dict[str, Any]] = circuit_info.get("bom", [])
+        candidates: set = set()
+        for entry in bom:
+            ref: str = entry.get("ref", "")
+            comp_type: str = entry.get("type", "")
+            if comp_type in ("Resistor", "Capacitor", "Inductor", "VoltageSource",
+                             "CurrentSource", "ACVoltageSource"):
+                continue
+            if "_" in ref:
+                candidates.add(ref.split("_", 1)[1].lower())
+            candidates.add(ref.lower())
+
+        cards: Dict[str, Any] = {}
+        for fname in os.listdir(DATASHEETS_DIR):
+            if not fname.lower().endswith(".card.json"):
+                continue
+            comp_name = fname.lower().removesuffix(".card.json")
+            if comp_name in candidates:
+                try:
+                    with open(os.path.join(DATASHEETS_DIR, fname), "r", encoding="utf-8") as f:
+                        cards[comp_name.upper()] = json.load(f)
+                except Exception:
+                    pass
+        return cards
+
+    def _format_prompt(
+        self,
+        circuit_info: Dict[str, Any],
+        sim_results: Dict[str, Any],
+        task_intent: str,
+    ) -> str:
+        cards = self._load_component_cards(circuit_info)
+        cards_section = self._safe_json(cards, indent=2) if cards else "No datasheets indexed."
+
         return f"""
 ### TASK DESCRIPTION
 {task_intent}
 
 ### CIRCUIT BOM
-{json.dumps(circuit_info, indent=2)}
+{self._safe_json(circuit_info, indent=2)}
+
+### COMPONENT DATASHEETS (summaries — use query_datasheet tool for details)
+{cards_section}
 
 ### SOLVER SIMULATION RESULTS
-{json.dumps(sim_results, indent=2)}
+{self._safe_json(sim_results, indent=2)}
 
 Please perform a Senior Design Review. Use the 'recalculate_divider' tool if the output voltage is wrong.
 """
 
+
 if __name__ == "__main__":
+    import asyncio
+
     async def test():
         reviewer = DesignReviewAgent()
-        # Mocking a failing divider: 12V in, target 3.3V, but we have R1=10k, R2=1k (Output ~1.09V)
         circuit = {
-            "bom": [{"designator": "R1", "value": 10000}, {"designator": "R2", "value": 1000}, {"designator": "V1", "value": 12.0}]
+            "bom": [
+                {"designator": "R1", "value": 10000},
+                {"designator": "R2", "value": 1000},
+                {"designator": "V1", "value": 12.0},
+            ]
         }
         results = {
             "dc_op": {"out": 1.09, "in": 12.0},
-            "currents": {"V1": 0.00109} # 12/11000
+            "currents": {"V1": 0.00109},
         }
         intent = "Voltage divider to step down 12V to 3.3V @ 5mA max."
-        
         print("--- Testing Tool Calling Loop ---")
         report = await reviewer.review_design_async(circuit, results, intent)
         print(report)

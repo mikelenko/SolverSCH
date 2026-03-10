@@ -372,6 +372,63 @@ class Simulator:
             "available_report_sheets": ["summary", "dc", "ac", "transient", "bom"],
         }
         
+    def _build_bom(self) -> List[Dict]:
+        """Build a Bill of Materials from circuit components."""
+        bom = []
+        for comp in self.circuit.get_components():
+            entry: Dict = {
+                "ref": comp.name,
+                "type": type(comp).__name__,
+                "nodes": list(comp.nodes()),
+            }
+            for attr in ("value", "resistance", "capacitance", "inductance", "voltage", "current"):
+                if hasattr(comp, attr):
+                    entry["value"] = getattr(comp, attr)
+                    break
+            bom.append(entry)
+        return bom
+
+    async def review(
+        self,
+        dc_result: Optional[DcAnalysisResult] = None,
+        ac_result: Optional[AcAnalysisResult] = None,
+        transient_result: Optional[TransientAnalysisResult] = None,
+        intent: str = "Perform a full design review.",
+        backend: str = "gemini",
+        model: str = "gemini-3.1-flash-lite-preview",
+    ) -> str:
+        """Run an AI design review on simulation results.
+
+        Compiles circuit info and simulation data, then calls DesignReviewAgent
+        to produce a Markdown engineering report.
+
+        Args:
+            dc_result: Optional DC analysis result.
+            ac_result: Optional AC analysis result.
+            transient_result: Optional transient analysis result.
+            intent: Natural-language description of what to review.
+            backend: LLM backend — "gemini" or "ollama".
+            model: Model name for the backend.
+
+        Returns:
+            Markdown report string with Executive Summary, Critical Warnings, etc.
+        """
+        from solver_sch.ai.design_reviewer import DesignReviewAgent
+
+        circuit_info = self.info()
+        circuit_info["bom"] = self._build_bom()
+
+        sim_results: Dict = {}
+        if dc_result is not None:
+            sim_results["dc"] = dc_result.to_dict()
+        if ac_result is not None:
+            sim_results["ac"] = ac_result.to_dict()
+        if transient_result is not None:
+            sim_results["transient"] = transient_result.to_dict()
+
+        agent = DesignReviewAgent(backend=backend, model=model)
+        return await agent.review_design_async(circuit_info, sim_results, intent)
+
     def compare_with_ltspice(
         self,
         analyses: List[str] = ["dc", "ac"],

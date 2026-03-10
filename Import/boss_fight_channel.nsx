@@ -16,7 +16,7 @@ C_FILT Net_A 0 1n
 * 4. Stopień wzmacniający: OpAmp w konfiguracji nieodwracającej
 * Wzmocnienie: 1 + (10k / 1k) = 11. 
 * Spodziewane wyjście DC: 0.5V * 11 = 5.5V (Zbyt dużo dla MCU!)
-R_IN Net_A Net_OpAmp_Neg 1k
+R_IN 0 Net_OpAmp_Neg 1k
 R_FB out Net_OpAmp_Neg 10k
 X_U1 Net_A Net_OpAmp_Neg VCC VSS out LM358
 
@@ -27,6 +27,8 @@ D_ADC 0 out BZX84C5V1
 .MODEL BZX84C5V1 D(IS=1e-15 RS=10 N=1.1 BV=5.1 IBV=1m)
 .SUBCKT LM358 IN_P IN_N V_POS V_NEG OUT
 E1 OUT 0 IN_P IN_N 100000
+R_DUMMY1 V_POS 0 1G
+R_DUMMY2 V_NEG 0 1G
 .ENDS LM358
 
 .END

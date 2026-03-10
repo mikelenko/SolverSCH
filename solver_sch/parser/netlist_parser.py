@@ -215,6 +215,26 @@ class NetlistParser:
                 continue
                 
             name = parts[0]
+            if name.upper().startswith('.MODEL'):
+                if len(parts) >= 3:
+                    model_name = parts[1]
+                    model_type = parts[2].split('(')[0]
+                    
+                    params = {}
+                    paren_start = line.find('(')
+                    paren_end = line.rfind(')')
+                    if paren_start != -1 and paren_end != -1 and paren_start < paren_end:
+                        param_str = line[paren_start+1:paren_end]
+                        for token in param_str.split():
+                            if '=' in token:
+                                k, v = token.split('=', 1)
+                                try: params[k] = cls._parse_value(v)
+                                except ValueError: params[k] = v
+                                
+                    from solver_sch.model.components import ModelCard
+                    circuit.add_model(ModelCard(name=model_name, model_type=model_type, parameters=params))
+                continue
+                
             if name.startswith('.'):
                 continue
             # Extract true physical designator even if hierarchically prefixed (e.g. 'X1.X2.R1' -> 'R')
@@ -236,24 +256,41 @@ class NetlistParser:
                     parts_upper = [p.upper() for p in parts]
                     
                     if 'AC' in parts_upper or 'SIN' in parts_upper or 'SINE' in parts_upper:
-                        # Handle AC/SIN/SINE
-                        amp_idx = 4
-                        for token in ['AC', 'SIN', 'SINE']:
-                            if token in parts_upper:
-                                token_idx = parts_upper.index(token)
-                                # Next token might be the value, or it might be (val ...)
-                                if len(parts) > token_idx + 1:
-                                    val_str = parts[token_idx+1]
-                                    # Strip parentheses if SINE(0 0.1 1000)
-                                    val_str = val_str.replace('(', ' ').replace(')', ' ').split()[0]
-                                    try:
-                                        amp = cls._parse_value(val_str)
-                                        freq = cls._parse_value(parts[token_idx+2]) if len(parts) > token_idx+2 else 1000.0
-                                    except (ValueError, IndexError):
-                                        amp = 1.0  # Default
-                                        freq = 1000.0
-                                    circuit.add_component(ACVoltageSource(name, node1, node2, amp, freq))
-                                    break
+                        # Extract AC magnitude if "AC val" is present
+                        ac_mag = 1.0
+                        if 'AC' in parts_upper:
+                            ac_idx = parts_upper.index('AC')
+                            if len(parts) > ac_idx + 1:
+                                try:
+                                    ac_mag = cls._parse_value(parts[ac_idx+1])
+                                except ValueError:
+                                    pass
+                        
+                        # Extract SINE parameters if present
+                        dc_offset = 0.0
+                        amp = 1.0
+                        freq = 1000.0
+                        
+                        # Reconstruct the line to parse SINE( VO VA FREQ ... ) easily
+                        import re
+                        match = re.search(r'SINE?\s*\(\s*([^)]+)\s*\)', line, re.IGNORECASE)
+                        if match:
+                            sine_params = match.group(1).split()
+                            if len(sine_params) >= 1:
+                                try: dc_offset = cls._parse_value(sine_params[0])
+                                except ValueError: pass
+                            if len(sine_params) >= 2:
+                                try: amp = cls._parse_value(sine_params[1])
+                                except ValueError: pass
+                            if len(sine_params) >= 3:
+                                try: freq = cls._parse_value(sine_params[2])
+                                except ValueError: pass
+                                
+                        circuit.add_component(ACVoltageSource(
+                            name, node1, node2, 
+                            amplitude=amp, frequency=freq, 
+                            dc_offset=dc_offset, ac_mag=ac_mag
+                        ))
                     elif 'DC' in parts_upper:
                         dc_idx = parts_upper.index('DC')
                         val = cls._parse_value(parts[dc_idx+1]) if len(parts) > dc_idx+1 else 0.0
