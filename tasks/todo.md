@@ -1,30 +1,22 @@
-# Hierarchical RAG dla Dużych Datasheetów
+# Tasks
 
-- [x] `datasheets/build_index.py` — offline indexer: section detection (font-size), smart chunking (≤2000→1 chunk, >2000→split+overlap), table extraction (markdown), Component Card via Gemini, zapis `.index.json` + `.card.json`
-- [x] `tool_query_datasheet` — priority 1: ładuj `.index.json` (skip PDF), priority 2: live PDF parse. Wyniki zawierają `section` metadata. Dołącza `component_card` z `.card.json` gdy dostępna.
-- [x] `_load_component_cards()` — skanuje `datasheets/*.card.json`, matchuje z BOM (pomija pasywne)
-- [x] `_format_prompt()` — nowa sekcja `### COMPONENT DATASHEETS` wstrzykiwana do każdego promptu
-- [x] `tests/test_hierarchical_rag.py` — 6 testów (build_index, index-first loading, section metadata, fallback PDF, card injection, no-card fallback)
-- [x] 64/64 testów zielonych
+## Altium to SPICE Exporter
+- [x] Analiza formatu pliku `.NET` (Altium Netlist)
+- [x] Analiza BOM `.xls`
+- [x] Utworzenie modelu danych `altium_model.py`
+- [x] Implementacja parsera `altium_parser.py`
+  - [x] Parser sekcji komponentÃ³w `[...]`
+  - [x] Parser sekcji sieci `(...)`
+  - [x] Parser wartoÅci z pola comment (100k, 10p, 1k5, 0R, etc.)
+  - [x] Parsowanie BOM z xlrd
+  - [x] Konwersja do `Circuit`
+  - [x] Eksport do tekstu SPICE
+- [x] Integracja z CLI (`altium-to-spice` command)
+- [x] Testy jednostkowe `test_altium_parser.py`
+- [x] Weryfikacja na rzeczywistym pliku 058-SBS-07 Comparator
+- [x] Aktualizacja `tasks/lessons.md`
 
----
-
-# Integracja Simulator → AI Design Review Pipeline
-
-- [x] `Simulator.review()` + `_build_bom()` — lazy import DesignReviewAgent, kompiluje BOM + sim_results, wywołuje agent
-- [x] `Simulator._build_bom()` — iteruje po komponentach, wyciąga ref/type/value/nodes
-- [x] CLI `solversch review <netlist> [--intent ...] [--model ...]` — parsuje netlistę, uruchamia dc(), wywołuje review()
-- [x] `tests/test_review_pipeline.py` — 4 testy (payload structure, markdown return, missing API key, partial results)
-- [x] 58/58 testów zielonych
-
----
-
-# Zadanie: Uruchomienie testu Gemini 3.1 Flash Multimodal Flow
-
-## Plan
-- [x] Utworzenie pliku `tests/test_gemini_multimodal.py` z przekazanym kodem.
-- [x] Sprawdzenie istnienia `GEMINI_API_KEY` w `.env` (KLUCZ DODANY).
-- [x] Sprawdzenie istnienia obrazka `import/LM358_pinout.png` (Obrazek istnieje).
-- [x] Instalacja wymaganych bibliotek: `google-generativeai python-dotenv pytest-asyncio` (ZAKOŃCZONO).
-- [x] Uruchomienie skryptu: `python tests/test_gemini_multimodal.py`.
-- [x] Weryfikacja wyniku działania testu (SUKCES).
+## AI Circuit Analysis
+- [x] Wczytanie wyizolowanego obwodu Comparator_A_1.cir
+- [x] Analiza topologii (dzielniki napiêæ, filtry RC)
+- [x] Wnioski na temat uk³adu kondycjonowania sygna³u
