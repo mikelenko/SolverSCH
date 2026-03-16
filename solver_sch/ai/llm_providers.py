@@ -12,7 +12,16 @@ Usage:
     llm = get_provider("ollama", model="llama3")  # Local Ollama
     llm = get_provider("stub")             # Offline stub for testing
 
+    # Single-turn
     response = llm.generate("Design an RC low-pass filter at 1kHz.")
+
+    # Multi-turn chat
+    history = []
+    reply, history = llm.chat("What is a low-pass filter?", history)
+    reply, history = llm.chat("Give me an RC example at 1kHz.", history)
+
+Message history format:
+    [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
 """
 
 from __future__ import annotations
@@ -26,15 +35,20 @@ from typing import List, Dict, Optional
 logger = logging.getLogger("solver_sch.llm_providers")
 
 
+Message = Dict[str, str]  # {"role": "user"|"assistant", "content": "..."}
+
+
 class LLMProvider(ABC):
     """Abstract base class for LLM API providers.
-    
+
     Implement `generate(prompt)` to add a new provider.
+    `chat()` has a default implementation built on top of `generate()`,
+    but providers can override it to use native multi-turn APIs.
     """
 
     @abstractmethod
     def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
-        """Send a prompt and return the text response.
+        """Send a single prompt and return the text response.
 
         Args:
             prompt: User message / prompt to send.
@@ -43,6 +57,36 @@ class LLMProvider(ABC):
         Returns:
             The LLM text response as a string.
         """
+
+    def chat(
+        self,
+        message: str,
+        history: Optional[List[Message]] = None,
+        system_instruction: Optional[str] = None,
+    ) -> tuple[str, List[Message]]:
+        """Send a message in a multi-turn conversation.
+
+        Args:
+            message: The new user message.
+            history: Previous messages as a list of {"role", "content"} dicts.
+                     Pass [] or None to start a fresh conversation.
+            system_instruction: Optional system prompt (applied on every turn).
+
+        Returns:
+            (reply, updated_history) — the assistant's reply and the full
+            updated history including the new turn.
+        """
+        history = list(history) if history else []
+        history.append({"role": "user", "content": message})
+        # Build a single prompt from history for providers that don't natively
+        # support message arrays (overridden in providers that do).
+        full_prompt = "\n".join(
+            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in history
+        )
+        reply = self.generate(full_prompt, system_instruction=system_instruction)
+        history.append({"role": "assistant", "content": reply})
+        return reply, history
 
 
 class GeminiProvider(LLMProvider):
@@ -63,7 +107,8 @@ class GeminiProvider(LLMProvider):
 
     def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
         from google.genai import types, errors
-        while True:
+        max_retries = 5
+        for attempt in range(max_retries):
             try:
                 config = types.GenerateContentConfig(temperature=self.temperature)
                 if system_instruction:
@@ -79,7 +124,50 @@ class GeminiProvider(LLMProvider):
                 return response.text
             except errors.ClientError as e:
                 if e.code == 429:
-                    logger.warning("Gemini rate limit hit (429). Retrying in 45s...")
+                    if attempt >= max_retries - 1:
+                        raise
+                    logger.warning("Gemini rate limit hit (429). Retrying %d/%d in 45s...", attempt + 1, max_retries)
+                    time.sleep(45)
+                else:
+                    raise
+
+    def chat(
+        self,
+        message: str,
+        history: Optional[List[Message]] = None,
+        system_instruction: Optional[str] = None,
+    ) -> tuple[str, List[Message]]:
+        from google.genai import types, errors
+        history = list(history) if history else []
+        history.append({"role": "user", "content": message})
+        # Gemini uses "user"/"model" roles and Content objects
+        contents = [
+            types.Content(
+                role="user" if m["role"] == "user" else "model",
+                parts=[types.Part(text=m["content"])],
+            )
+            for m in history
+        ]
+        config = types.GenerateContentConfig(temperature=self.temperature)
+        if system_instruction:
+            config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=self.temperature,
+            )
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                response = self._client.models.generate_content(
+                    model=self.model, contents=contents, config=config
+                )
+                reply = response.text
+                history.append({"role": "assistant", "content": reply})
+                return reply, history
+            except errors.ClientError as e:
+                if e.code == 429:
+                    if attempt >= max_retries - 1:
+                        raise
+                    logger.warning("Gemini rate limit hit (429). Retrying %d/%d in 45s...", attempt + 1, max_retries)
                     time.sleep(45)
                 else:
                     raise
@@ -113,6 +201,25 @@ class OpenAIProvider(LLMProvider):
         )
         return response.choices[0].message.content
 
+    def chat(
+        self,
+        message: str,
+        history: Optional[List[Message]] = None,
+        system_instruction: Optional[str] = None,
+    ) -> tuple[str, List[Message]]:
+        history = list(history) if history else []
+        history.append({"role": "user", "content": message})
+        messages = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.extend(history)
+        response = self._client.chat.completions.create(
+            model=self.model, messages=messages, temperature=self.temperature
+        )
+        reply = response.choices[0].message.content
+        history.append({"role": "assistant", "content": reply})
+        return reply, history
+
 
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude API provider.
@@ -138,6 +245,27 @@ class AnthropicProvider(LLMProvider):
         response = self._client.messages.create(**kwargs)
         return response.content[0].text
 
+    def chat(
+        self,
+        message: str,
+        history: Optional[List[Message]] = None,
+        system_instruction: Optional[str] = None,
+    ) -> tuple[str, List[Message]]:
+        history = list(history) if history else []
+        history.append({"role": "user", "content": message})
+        kwargs: dict = {
+            "model": self.model,
+            "max_tokens": 4096,
+            "temperature": self.temperature,
+            "messages": history,
+        }
+        if system_instruction:
+            kwargs["system"] = system_instruction
+        response = self._client.messages.create(**kwargs)
+        reply = response.content[0].text
+        history.append({"role": "assistant", "content": reply})
+        return reply, history
+
 
 class OllamaProvider(LLMProvider):
     """Local Ollama provider (no API key needed).
@@ -151,29 +279,56 @@ class OllamaProvider(LLMProvider):
         self.base_url = base_url
         self.temperature = temperature
 
-    def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
+    def _ollama_request(self, messages: List[Message]) -> str:
         import urllib.request
         import json
-        full_prompt = f"{system_instruction}\n\n{prompt}" if system_instruction else prompt
         payload = json.dumps({
             "model": self.model,
-            "prompt": full_prompt,
+            "messages": messages,
             "stream": False,
-            "options": {
-                "temperature": self.temperature
-            }
+            "options": {"temperature": self.temperature},
         }).encode()
-        req = urllib.request.Request(f"{self.base_url}/api/generate", data=payload, method="POST",
-                                     headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read())["response"]
+        req = urllib.request.Request(
+            f"{self.base_url}/api/chat", data=payload, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            return json.loads(resp.read())["message"]["content"]
+
+    def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
+        messages: List[Message] = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.append({"role": "user", "content": prompt})
+        return self._ollama_request(messages)
+
+    def chat(
+        self,
+        message: str,
+        history: Optional[List[Message]] = None,
+        system_instruction: Optional[str] = None,
+    ) -> tuple[str, List[Message]]:
+        history = list(history) if history else []
+        history.append({"role": "user", "content": message})
+        messages: List[Message] = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.extend(history)
+        reply = self._ollama_request(messages)
+        history.append({"role": "assistant", "content": reply})
+        return reply, history
 
 
 class StubProvider(LLMProvider):
     """Offline stub provider for testing / development without API keys.
-    
+
     Returns a static valid SPICE netlist so the pipeline can be tested end-to-end.
+    Accepts (and ignores) common kwargs like temperature/model for API compatibility.
     """
+
+    def __init__(self, model: str = "stub", temperature: float = 0.1, **_kwargs) -> None:
+        self.model = model
+        self.temperature = temperature
 
     def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
         logger.info("[StubProvider] Returning canned RC filter netlist.")
