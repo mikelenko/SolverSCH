@@ -15,14 +15,22 @@ dependencies = [
     "scipy",
     "plotly",
     "openpyxl",
-    "aiohttp"
+    "aiohttp",
+    "PyMuPDF",
+    "rank_bm25"
 ]
 
 [project.optional-dependencies]
 dev = ["pytest"]
+gui = ["PySide6>=6.5", "matplotlib>=3.7"]
 
 [project.scripts]
 solversch = "solver_sch.cli:main"
+
+[tool.pytest.ini_options]
+markers = [
+    "ollama: tests requiring a running Ollama instance (deselect with '-m \"not ollama\"')"
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["solver_sch"]
