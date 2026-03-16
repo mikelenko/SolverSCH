@@ -186,11 +186,13 @@ class Inductor(TwoTerminalPassive):
         return 0.0  # Non-applicable, operates on transient Geq/Ieq
 
 
-class BJT(ThreeTerminalActive):
-    """An ideal NPN Bipolar Junction Transistor relying on Ebers-Moll injection model.
+class _BJTBase(ThreeTerminalActive):
+    """Shared base for Ebers-Moll BJT models (NPN and PNP).
 
+    Subclasses set `_polarity`: +1 for NPN, -1 for PNP.
     Terminals: Collector, Base, Emitter.
     """
+    _polarity: int
 
     def __init__(
         self,
@@ -225,8 +227,38 @@ class BJT(ThreeTerminalActive):
     def emitter(self) -> str: return self.term3
 
     @property
+    def bjt_type(self) -> str:
+        return "NPN" if self._polarity == 1 else "PNP"
+
+    @property
     def voltage(self) -> float:
         return 0.0
+
+
+class BJT_N(_BJTBase):
+    """Ebers-Moll NPN BJT. Current flows into collector."""
+    _polarity = 1
+
+    def __init__(self, name: str, collector: str, base: str, emitter: str,
+                 Is: float = 1e-14, Bf: float = 100.0, Br: float = 1.0,
+                 Vt: float = THERMAL_VOLTAGE, model: Optional[str] = None,
+                 **kwargs: Any) -> None:
+        super().__init__(name, collector, base, emitter, Is, Bf, Br, Vt, model, **kwargs)
+
+
+class BJT_P(_BJTBase):
+    """Ebers-Moll PNP BJT. Current flows out of collector."""
+    _polarity = -1
+
+    def __init__(self, name: str, collector: str, base: str, emitter: str,
+                 Is: float = 1e-14, Bf: float = 100.0, Br: float = 1.0,
+                 Vt: float = THERMAL_VOLTAGE, model: Optional[str] = None,
+                 **kwargs: Any) -> None:
+        super().__init__(name, collector, base, emitter, Is, Bf, Br, Vt, model, **kwargs)
+
+
+# Backward-compatible alias
+BJT = BJT_N
 
 
 class _MOSFETBase(ThreeTerminalActive):
@@ -336,7 +368,52 @@ class Comparator(ThreeTerminalActive):
         return 0.0
 
 
+class LM5085Gate(Component):
+    """Behavioral DC model of the LM5085 PGATE driver + internal VCC regulator.
+
+    Models two functions of the LM5085 COT buck controller:
+      1. PGATE output: V_pgate = V_vin - Vdrive * sigmoid(k * (VREF - V_fb))
+         - When V_fb < VREF=1.25V: sigmoid→1, PGATE = V_vin - Vdrive  (PFET ON)
+         - When V_fb > VREF:       sigmoid→0, PGATE ≈ V_vin             (PFET OFF)
+      2. VCC internal supply: modeled externally as VoltageSource(vcc, gnd, VCC_VOLTAGE)
+
+    The PGATE stamping uses a tanh-based smooth approximation suitable for Newton-Raphson.
+
+    Nodes:
+      vin   - input supply (VIN pin 8)
+      fb    - feedback node (ADJ/FB pin 2), compared to VREF
+      pgate - gate driver output (PGATE pin 6)
+      gnd   - ground reference
+    """
+    VREF: float = 1.25      # Internal FB reference voltage [V]
+    VCC_VOLTAGE: float = 7.0  # Internal bias supply voltage [V]
+
+    def __init__(
+        self,
+        name: str,
+        vin: str,
+        fb: str,
+        pgate: str,
+        vcc: str,
+        gnd: str = "0",
+        vdrive: float = 5.0,
+        k: float = 500.0,
+    ) -> None:
+        super().__init__(name)
+        self.vin = vin
+        self.fb = fb
+        self.pgate = pgate
+        self.vcc = vcc
+        self.gnd = gnd
+        self.vdrive = vdrive  # Gate drive swing [V]: PGATE = VIN - vdrive when ON
+        self.k = k            # Sigmoid steepness
+
+    def nodes(self) -> Tuple[str, ...]:
+        return (self.vin, self.fb, self.pgate, self.vcc, self.gnd)
+
+
 # Class Aliases for EDA Test Integrity
 NMOS = MOSFET_N
 PMOS = MOSFET_P
-NPN = BJT
+NPN = BJT_N
+PNP = BJT_P

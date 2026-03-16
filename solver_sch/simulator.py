@@ -69,8 +69,8 @@ class Simulator:
         
         # Decide active backend based on complexity
         if backend == "auto":
-            from solver_sch.model.circuit import Diode, BJT, MOSFET_N, MOSFET_P, OpAmp, Comparator
-            has_nonlinear = any(isinstance(c, (Diode, BJT, MOSFET_N, MOSFET_P, OpAmp, Comparator)) 
+            from solver_sch.model.circuit import Diode, _BJTBase, MOSFET_N, MOSFET_P, OpAmp, Comparator
+            has_nonlinear = any(isinstance(c, (Diode, _BJTBase, MOSFET_N, MOSFET_P, OpAmp, Comparator))
                                 for c in self.circuit.get_components())
             self.active_backend = "ltspice" if has_nonlinear else "mna"
         else:
@@ -91,37 +91,7 @@ class Simulator:
             return
 
         logger.debug("Building MNA matrices for circuit '%s'", self.circuit.name)
-        
-        # Map SPICE ModelCard parameters to numerical values in internal components
-        from solver_sch.model.circuit import Diode, BJT, MOSFET_N, MOSFET_P
-        from solver_sch.parser.netlist_parser import NetlistParser
-        
-        models = self.circuit.get_models()
-        for comp in self.circuit.get_components():
-            if hasattr(comp, "model") and getattr(comp, "model") in models:
-                mc = models[comp.model]
-                # Combine ModelCard parameters with individual component overrides
-                merged_params = {k.lower(): v for k, v in mc.parameters.items()}
-                merged_params.update({k.lower(): v for k, v in getattr(comp, "spice_params", {}).items()})
-                
-                def parse_val(v):
-                    if isinstance(v, str):
-                        try: return NetlistParser._parse_value(v)
-                        except Exception: return v
-                    return v
-                    
-                if isinstance(comp, Diode):
-                    if "is" in merged_params: comp.Is = parse_val(merged_params["is"])
-                    if "n" in merged_params: comp.n = parse_val(merged_params["n"])
-                    if "bv" in merged_params: comp.Vz = parse_val(merged_params["bv"])
-                elif isinstance(comp, BJT):
-                    if "is" in merged_params: comp.Is = parse_val(merged_params["is"])
-                    if "bf" in merged_params: comp.Bf = parse_val(merged_params["bf"])
-                    if "br" in merged_params: comp.Br = parse_val(merged_params["br"])
-                elif isinstance(comp, (MOSFET_N, MOSFET_P)):
-                    if "vto" in merged_params: comp.v_th = parse_val(merged_params["vto"])
-                    if "kp" in merged_params: comp.k_p = parse_val(merged_params["kp"])
-                    if "lambda" in merged_params: comp.lambda_ = parse_val(merged_params["lambda"])
+        self.circuit.apply_models()
 
         self._stamper = MNAStamper(self.circuit)
         A_lil, z_vec = self._stamper.stamp_linear()
@@ -166,6 +136,9 @@ class Simulator:
 
         self._build()
         raw = self._solver.solve()
+        # Store DC solution for AC linearization and transient initial conditions
+        if raw.x_converged is not None:
+            self._stamper.set_dc_solution(raw.x_converged)
         return DcAnalysisResult(
             node_voltages=dict(raw.node_voltages),
             source_currents=dict(raw.voltage_source_currents),
@@ -214,6 +187,13 @@ class Simulator:
             )
 
         self._build()
+
+        # AC requires DC operating point for nonlinear component linearization
+        if self._stamper._x_dc is None:
+            logger.debug("Running DC solve for AC linearization operating point")
+            self._solver.solve()
+            if self._solver.x_vec is not None:
+                self._stamper.set_dc_solution(self._solver.x_vec)
 
         num_decades = np.log10(f_stop / f_start)
         num_points = int(num_decades * points_per_decade) + 1
@@ -286,6 +266,11 @@ class Simulator:
             )
 
         self._build()
+
+        # Compute DC operating point for proper transient initial conditions
+        if self._solver.x_vec is None:
+            logger.debug("Running DC solve for transient initial conditions")
+            self._solver.solve()
 
         raw_results = self._solver.simulate_transient(t_stop, dt)
         timepoints = [
@@ -385,6 +370,18 @@ class Simulator:
                 if hasattr(comp, attr):
                     entry["value"] = getattr(comp, attr)
                     break
+            if hasattr(comp, "model") and getattr(comp, "model"):
+                entry["spice_model"] = comp.model
+                # Correct type classification from SPICE model suffix when parser defaulted
+                model_upper = comp.model.upper()
+                if model_upper.endswith("_PMOS") and entry["type"] == "MOSFET_N":
+                    entry["type"] = "MOSFET_P"
+                elif model_upper.endswith("_NMOS") and entry["type"] == "MOSFET_P":
+                    entry["type"] = "MOSFET_N"
+                elif model_upper.endswith("_PNP") and entry["type"] == "BJT_NPN":
+                    entry["type"] = "BJT_PNP"
+                elif model_upper.endswith("_NPN") and entry["type"] == "BJT_PNP":
+                    entry["type"] = "BJT_NPN"
             bom.append(entry)
         return bom
 
@@ -396,6 +393,7 @@ class Simulator:
         intent: str = "Perform a full design review.",
         backend: str = "gemini",
         model: str = "gemini-3.1-flash-lite-preview",
+        netlist_text: Optional[str] = None,
     ) -> str:
         """Run an AI design review on simulation results.
 
@@ -425,6 +423,9 @@ class Simulator:
             sim_results["ac"] = ac_result.to_dict()
         if transient_result is not None:
             sim_results["transient"] = transient_result.to_dict()
+
+        if netlist_text:
+            circuit_info["netlist_text"] = netlist_text
 
         agent = DesignReviewAgent(backend=backend, model=model)
         return await agent.review_design_async(circuit_info, sim_results, intent)

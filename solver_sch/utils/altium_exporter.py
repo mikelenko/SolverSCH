@@ -4,7 +4,8 @@ from typing import Dict, Tuple, Set
 import logging
 from solver_sch.model.circuit import (
     Resistor, Capacitor, Inductor, VoltageSource, ACVoltageSource,
-    Diode, BJT, MOSFET_N, MOSFET_P, OpAmp, Comparator, Circuit
+    Diode, _BJTBase, BJT, BJT_N, BJT_P, MOSFET_N, MOSFET_P,
+    OpAmp, Comparator, Circuit
 )
 
 logger = logging.getLogger("solver_sch.utils.altium_exporter")
@@ -109,7 +110,7 @@ class AltiumScriptExporter:
             return {comp.in_p: (-200, 100), comp.in_n: (-200, -100), comp.out: (200, 0)}
         if isinstance(comp, Comparator):
             return {comp.node_p: (-200, 100), comp.node_n: (-200, -100), comp.node_out: (200, 0)}
-        if isinstance(comp, BJT):
+        if isinstance(comp, _BJTBase):
             return {comp.collector: (0, 200), comp.base: (-200, 0), comp.emitter: (0, -200)}
         return {}
 
@@ -122,6 +123,6 @@ class AltiumScriptExporter:
         if isinstance(comp, Inductor): return "Inductor", lib
         if isinstance(comp, (VoltageSource, ACVoltageSource)): return "Source V", lib
         if isinstance(comp, Diode): return "Diode", lib
-        if isinstance(comp, BJT): return "NPN", lib # Assuming NPN for now
+        if isinstance(comp, _BJTBase): return ("NPN" if isinstance(comp, BJT_N) else "PNP"), lib
         if isinstance(comp, (OpAmp, Comparator)): return "OpAmp", lib
         return "Component", lib

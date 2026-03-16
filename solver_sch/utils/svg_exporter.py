@@ -8,8 +8,8 @@ from collections import deque
 from typing import Any, Dict, List, Set, Deque
 
 from solver_sch.model.circuit import (
-    Resistor, Capacitor, Inductor, VoltageSource, ACVoltageSource, 
-    Diode, BJT, MOSFET_N, MOSFET_P, OpAmp
+    Resistor, Capacitor, Inductor, VoltageSource, ACVoltageSource,
+    Diode, _BJTBase, BJT_N, BJT_P, MOSFET_N, MOSFET_P, OpAmp
 )
 
 SKIN_PATH = os.path.join(os.path.dirname(__file__), 'resources', 'solver_sch_skin.svg')
@@ -141,8 +141,8 @@ class SVGExporter:
         elif isinstance(comp, Diode):
             suffix = '_v' if (self._is_power(comp.node1) or self._is_power(comp.node2)) else '_h'
             self._add_2port('d' + suffix, comp.name, comp.node1, comp.node2, getattr(comp, 'model', 'D'), '+', '-')
-        elif isinstance(comp, BJT):
-            comp_type = 'q_npn' if 'NPN' in str(getattr(comp, 'type', 'NPN')).upper() else 'q_pnp'
+        elif isinstance(comp, _BJTBase):
+            comp_type = 'q_npn' if isinstance(comp, BJT_N) else 'q_pnp'
             self._add_3port(comp_type, comp.name, ('C', comp.collector, 'output'), ('B', comp.base, 'input'), ('E', comp.emitter, 'output'), getattr(comp, 'model', 'Q'))
         elif isinstance(comp, (MOSFET_N, MOSFET_P)):
             comp_type = 'q_npn' if isinstance(comp, MOSFET_N) else 'q_pnp'

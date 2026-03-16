@@ -13,9 +13,9 @@ from typing import Callable, Dict, List
 
 import numpy as np
 
-from solver_sch.constants import GMIN
+from solver_sch.constants import GMIN, DIODE_VD_LIMIT, BJT_VBE_LIMIT, MOSFET_VOV_CLAMP, SIGMOID_CLAMP_RANGE
 from solver_sch.model.components import (
-    BJT, Comparator, Diode, MOSFET_N, MOSFET_P,
+    _BJTBase, BJT, Comparator, Diode, MOSFET_N, MOSFET_P, LM5085Gate,
 )
 
 
@@ -44,7 +44,7 @@ def stamp_diode_nl(
         Ieq = Id - Geq * Vd
     else:
         nvt = getattr(comp, "n", 1.0) * comp.Vt
-        Vd_safe = min(Vd, 0.8 * getattr(comp, "n", 1.0))
+        Vd_safe = min(Vd, DIODE_VD_LIMIT * getattr(comp, "n", 1.0))
         exp_val = np.exp(Vd_safe / nvt)
         Id = comp.Is * (exp_val - 1.0)
         Geq = (comp.Is / nvt) * exp_val
@@ -63,7 +63,7 @@ def stamp_diode_nl(
 
 
 def stamp_bjt_nl(
-    comp: BJT,
+    comp: "_BJTBase",
     x_prev: np.ndarray,
     z_nl: np.ndarray,
     rows: List[int],
@@ -72,7 +72,11 @@ def stamp_bjt_nl(
     node_to_idx: Dict[str, int],
     get_v: Callable[[int, np.ndarray], float],
 ) -> None:
-    """Stamp the linearized Ebers-Moll BJT companion model."""
+    """Stamp the linearized Ebers-Moll BJT companion model (unified NPN/PNP).
+
+    Uses comp._polarity: +1 for NPN (Vbe/Vbc convention), -1 for PNP (Veb/Vcb).
+    """
+    p = comp._polarity  # +1 NPN, -1 PNP
     c_idx = node_to_idx[comp.collector]
     b_idx = node_to_idx[comp.base]
     e_idx = node_to_idx[comp.emitter]
@@ -81,10 +85,11 @@ def stamp_bjt_nl(
     v_b = get_v(b_idx, x_prev)
     v_e = get_v(e_idx, x_prev)
 
-    Vbe = v_b - v_e
-    Vbc = v_b - v_c
-    Vbe_safe = min(Vbe, 0.8)
-    Vbc_safe = min(Vbc, 0.8)
+    # Normalized: NPN Vbe=Vb-Ve, PNP Veb=Ve-Vb (both positive when forward-biased)
+    Vbe = p * (v_b - v_e)
+    Vbc = p * (v_b - v_c)
+    Vbe_safe = min(Vbe, BJT_VBE_LIMIT)
+    Vbc_safe = min(Vbc, BJT_VBE_LIMIT)
 
     exp_vbe = np.exp(Vbe_safe / comp.Vt)
     exp_vbc = np.exp(Vbc_safe / comp.Vt)
@@ -106,20 +111,21 @@ def stamp_bjt_nl(
     Ieq_c = Ic - (g_ce * Vbe_safe - (g_ec + g_bc) * Vbc_safe)
     Ieq_e = Ie - (-(g_be + g_ce) * Vbe_safe + g_ec * Vbc_safe)
 
+    # For PNP, current direction is reversed relative to NPN
     if b_idx >= 0:
-        z_nl[b_idx, 0] -= Ieq_b
+        z_nl[b_idx, 0] -= p * Ieq_b
         rows.append(b_idx); cols.append(b_idx); data.append(g_be + g_bc)
         if e_idx >= 0: rows.append(b_idx); cols.append(e_idx); data.append(-g_be)
         if c_idx >= 0: rows.append(b_idx); cols.append(c_idx); data.append(-g_bc)
 
     if c_idx >= 0:
-        z_nl[c_idx, 0] -= Ieq_c
+        z_nl[c_idx, 0] -= p * Ieq_c
         if b_idx >= 0: rows.append(c_idx); cols.append(b_idx); data.append(g_ce - g_bc)
         if e_idx >= 0: rows.append(c_idx); cols.append(e_idx); data.append(-g_ce)
         rows.append(c_idx); cols.append(c_idx); data.append(g_ec + g_bc)
 
     if e_idx >= 0:
-        z_nl[e_idx, 0] -= Ieq_e
+        z_nl[e_idx, 0] -= p * Ieq_e
         if b_idx >= 0: rows.append(e_idx); cols.append(b_idx); data.append(-g_be - g_ce)
         rows.append(e_idx); cols.append(e_idx); data.append(g_be + g_ce)
         if c_idx >= 0: rows.append(e_idx); cols.append(c_idx); data.append(-g_ec)
@@ -162,7 +168,7 @@ def stamp_mosfet_nl(
         gm = comp.beta * V2 * (1 + comp.lambda_ * V2)
         gds = comp.beta * (Vov - V2) * (1 + comp.lambda_ * V2) + comp.beta * (Vov * V2 - 0.5 * V2**2) * comp.lambda_
     else:
-        Vov = min(V1 - Vth, 20.0)
+        Vov = min(V1 - Vth, MOSFET_VOV_CLAMP)
         I_main = 0.5 * comp.beta * Vov**2 * (1 + comp.lambda_ * V2)
         gm = comp.beta * Vov * (1 + comp.lambda_ * V2)
         gds = 0.5 * comp.beta * Vov**2 * comp.lambda_
@@ -201,6 +207,61 @@ def stamp_comparator_nl(
         rows.append(k); cols.append(p_idx); data.append(-f_prime)
     if n_idx >= 0:
         rows.append(k); cols.append(n_idx); data.append(f_prime)
+
+
+def stamp_lm5085_gate_nl(
+    comp: LM5085Gate,
+    x_prev: np.ndarray,
+    z_nl: np.ndarray,
+    rows: List[int],
+    cols: List[int],
+    data: List[float],
+    node_to_idx: Dict[str, int],
+    get_v: Callable[[int, np.ndarray], float],
+    vcvs_to_idx: Dict[str, int],
+    n: int,
+) -> None:
+    """Stamp the LM5085 PGATE nonlinear driver.
+
+    Models: V_pgate = V_vin - vdrive * sigmoid(k * (VREF - V_fb))
+    where sigmoid(x) = 0.5 * (1 + tanh(x/2))
+
+    Linearized companion for Newton-Raphson:
+      f(V_fb) = V_vin - vdrive * sigmoid(k*(VREF - V_fb))
+      df/dV_fb = vdrive * k * sigmoid' = vdrive * k * sig * (1 - sig)  [positive]
+    The KVL row equation: V_pgate - f(V_fb) - (V_vin - V_vin_0) = 0
+    approximated as: V_pgate = f_0 + df/dV_fb * (V_fb - V_fb_0)
+    """
+    k_row = n + vcvs_to_idx[comp.name]
+
+    vin_idx = node_to_idx[comp.vin]
+    fb_idx = node_to_idx[comp.fb]
+    pg_idx = node_to_idx[comp.pgate]
+    gnd_idx = node_to_idx[comp.gnd]
+
+    v_vin = get_v(vin_idx, x_prev)
+    v_fb = get_v(fb_idx, x_prev)
+
+    # sigmoid(k*(VREF - V_fb)) — tanh-based smooth step
+    x_sig = comp.k * (comp.VREF - v_fb)
+    # Clamp to avoid exp overflow
+    x_sig = float(np.clip(x_sig, -SIGMOID_CLAMP_RANGE, SIGMOID_CLAMP_RANGE))
+    sig = 0.5 * (1.0 + np.tanh(x_sig / 2.0))
+    sig_prime = 0.5 * (1.0 - np.tanh(x_sig / 2.0) ** 2)  # dsig/dx_sig
+
+    V_pgate_eq = v_vin - comp.vdrive * sig
+    # df/dV_fb = vdrive * k * sig_prime  (chain rule: dsig/dV_fb = -k * sig_prime)
+    df_dvfb = comp.vdrive * comp.k * sig_prime
+
+    # KVL: V_pg = V_vin - vdrive*sig(V_fb)  →  RHS = V_pgate_eq - v_vin + df_dvfb*v_fb
+    z_nl[k_row, 0] = V_pgate_eq - v_vin - df_dvfb * (-v_fb)
+    # Jacobian: ∂F/∂V_pgate = +1 (from KVL row in linear stamp)
+    # ∂F/∂V_vin = -1
+    # ∂F/∂V_fb  = +df_dvfb
+    if vin_idx >= 0:
+        rows.append(k_row); cols.append(vin_idx); data.append(-1.0)
+    if fb_idx >= 0:
+        rows.append(k_row); cols.append(fb_idx); data.append(df_dvfb)
 
 
 def _apply_fet_matrix_stamp(

@@ -16,11 +16,12 @@ from solver_sch.model.circuit import (
     ACVoltageSource,
     CurrentSource,
     Diode,
-    BJT,
+    BJT, BJT_N, BJT_P,
     MOSFET_N,
     MOSFET_P,
     OpAmp,
-    Comparator
+    Comparator,
+    LM5085Gate,
 )
 import logging
 
@@ -209,17 +210,65 @@ class NetlistParser:
                 flat_lines.append(line)
                 
         # Phase 3: Physical Block Instantiation
+        cls._instantiate_components(flat_lines, circuit)
+
+        return circuit
+
+    @classmethod
+    def _instantiate_components(cls, flat_lines: List[str], circuit: "Circuit") -> None:
+        """Phase 3: Translate flat SPICE lines into Circuit components and model cards."""
+        import re
+
+        # ── Pre-scan: detect LM5085Gate B-source + companion VCC line ─────────
+        # Exported format:
+        #   B{name}_GATE {pgate} {gnd} V=V({vin})-{vd}*(0.5*(1+tanh({k/2}*({vref}-V({fb})))))
+        #   V{name}_VCC  {vcc}   {gnd} DC {VCC_VOLTAGE}
+        _LM5085_RE = re.compile(
+            r'^B(\w+?)_GATE\s+(\S+)\s+(\S+)\s+V=V\((\S+?)\)-([\d.eE+\-]+)\*'
+            r'\(0\.5\*\(1\+tanh\(([\d.eE+\-]+)\*\(([\d.eE+\-]+)-V\((\S+?)\)\)\)\)\)',
+            re.IGNORECASE,
+        )
+        _VCCSRC_RE = re.compile(
+            r'^V(\w+?)_VCC\s+(\S+)\s+(\S+)\s+DC\s+([\d.eE+\-]+)',
+            re.IGNORECASE,
+        )
+        lm5085_data: Dict[str, dict] = {}
+        vcc_map: Dict[str, str] = {}   # gate_name → vcc_node
+        for raw in flat_lines:
+            m = _LM5085_RE.match(raw.strip())
+            if m:
+                gname, pgate, gnd, vin, vd_s, khalf_s, vref_s, fb = m.groups()
+                lm5085_data[gname] = dict(
+                    pgate=pgate, gnd=gnd, vin=vin,
+                    vdrive=float(vd_s), k=float(khalf_s) * 2.0,
+                    fb=fb,
+                )
+                continue
+            m2 = _VCCSRC_RE.match(raw.strip())
+            if m2:
+                vcc_name, vcc_node = m2.group(1), m2.group(2)
+                vcc_map[vcc_name] = vcc_node
+
+        for gname, d in lm5085_data.items():
+            circuit.add_component(LM5085Gate(
+                gname, d["vin"], d["fb"], d["pgate"],
+                vcc=vcc_map.get(gname, "vcc"),
+                gnd=d["gnd"], vdrive=d["vdrive"], k=d["k"],
+            ))
+
+        _skip_b = {f"{n}_GATE" for n in lm5085_data}  # B-source names already handled
+
+        # ─────────────────────────────────────────────────────────────────────
         for line in flat_lines:
             parts = line.split()
             if not parts:
                 continue
-                
+
             name = parts[0]
             if name.upper().startswith('.MODEL'):
                 if len(parts) >= 3:
                     model_name = parts[1]
                     model_type = parts[2].split('(')[0]
-                    
                     params = {}
                     paren_start = line.find('(')
                     paren_end = line.rfind(')')
@@ -230,17 +279,16 @@ class NetlistParser:
                                 k, v = token.split('=', 1)
                                 try: params[k] = cls._parse_value(v)
                                 except ValueError: params[k] = v
-                                
                     from solver_sch.model.components import ModelCard
                     circuit.add_model(ModelCard(name=model_name, model_type=model_type, parameters=params))
                 continue
-                
+
             if name.startswith('.'):
                 continue
             # Extract true physical designator even if hierarchically prefixed (e.g. 'X1.X2.R1' -> 'R')
             base_name = name.split('.')[-1]
             designator = base_name[0].upper()
-            
+
             try:
                 # 1. Passive Components
                 if designator == 'R' and len(parts) >= 4:
@@ -249,30 +297,23 @@ class NetlistParser:
                     circuit.add_component(Capacitor(name, parts[1], parts[2], cls._parse_value(parts[3])))
                 elif designator == 'L' and len(parts) >= 4:
                     circuit.add_component(Inductor(name, parts[1], parts[2], cls._parse_value(parts[3])))
-                
+
                 # 2. Voltage Sources (DC and AC "SIN" syntax)
                 elif designator == 'V' and len(parts) >= 4:
                     node1, node2 = parts[1], parts[2]
                     parts_upper = [p.upper() for p in parts]
-                    
+
                     if 'AC' in parts_upper or 'SIN' in parts_upper or 'SINE' in parts_upper:
-                        # Extract AC magnitude if "AC val" is present
                         ac_mag = 1.0
                         if 'AC' in parts_upper:
                             ac_idx = parts_upper.index('AC')
                             if len(parts) > ac_idx + 1:
-                                try:
-                                    ac_mag = cls._parse_value(parts[ac_idx+1])
-                                except ValueError:
-                                    pass
-                        
-                        # Extract SINE parameters if present
+                                try: ac_mag = cls._parse_value(parts[ac_idx+1])
+                                except ValueError: pass
+
                         dc_offset = 0.0
                         amp = 1.0
                         freq = 1000.0
-                        
-                        # Reconstruct the line to parse SINE( VO VA FREQ ... ) easily
-                        import re
                         match = re.search(r'SINE?\s*\(\s*([^)]+)\s*\)', line, re.IGNORECASE)
                         if match:
                             sine_params = match.group(1).split()
@@ -285,10 +326,10 @@ class NetlistParser:
                             if len(sine_params) >= 3:
                                 try: freq = cls._parse_value(sine_params[2])
                                 except ValueError: pass
-                                
+
                         circuit.add_component(ACVoltageSource(
-                            name, node1, node2, 
-                            amplitude=amp, frequency=freq, 
+                            name, node1, node2,
+                            amplitude=amp, frequency=freq,
                             dc_offset=dc_offset, ac_mag=ac_mag
                         ))
                     elif 'DC' in parts_upper:
@@ -297,51 +338,72 @@ class NetlistParser:
                         circuit.add_component(VoltageSource(name, node1, node2, val))
                     else:
                         circuit.add_component(VoltageSource(name, node1, node2, cls._parse_value(parts[3])))
-                
+
                 # 2b. Current Sources
                 elif designator == 'I' and len(parts) >= 4:
                     circuit.add_component(CurrentSource(name, parts[1], parts[2], cls._parse_value(parts[3])))
-                
-                # 3. Semiconductor Logic 
+
+                # 3. Semiconductor Logic
                 elif designator == 'D' and len(parts) >= 3:
                     m_name = parts[3] if len(parts) > 3 else None
                     circuit.add_component(Diode(name, parts[1], parts[2], model=m_name))
-                
+
                 elif designator == 'Q' and len(parts) >= 4:
-                    circuit.add_component(BJT(name, parts[1], parts[2], parts[3]))
-                
+                    bjt_model = parts[4] if len(parts) > 4 else None
+                    # Determine NPN/PNP from model card type
+                    is_pnp = False
+                    if bjt_model and bjt_model in circuit.get_models():
+                        mc_type = circuit.get_models()[bjt_model].model_type.upper()
+                        is_pnp = mc_type == "PNP"
+                    elif bjt_model and "PNP" in bjt_model.upper():
+                        is_pnp = True
+                    bjt_cls = BJT_P if is_pnp else BJT_N
+                    circuit.add_component(bjt_cls(name, parts[1], parts[2], parts[3], model=bjt_model))
+
                 elif designator == 'M' and len(parts) >= 5:
-                    m_type = parts[4].upper()
+                    # SPICE MOSFET: M<name> drain gate source [bulk] [model] [W=.. L=..]
                     w_val = 1e-6
                     l_val = 1e-6
-                    
-                    for p in parts[5:]:
-                        if p.upper().startswith('W='):
-                            w_val = cls._parse_value(p[2:])
-                        elif p.upper().startswith('L='):
-                            l_val = cls._parse_value(p[2:])
-                            
-                    if m_type == 'NMOS':
-                        circuit.add_component(MOSFET_N(name, parts[1], parts[2], parts[3], w=w_val, l=l_val))
-                    elif m_type == 'PMOS':
-                        circuit.add_component(MOSFET_P(name, parts[1], parts[2], parts[3], w=w_val, l=l_val))
+                    spice_model = ""
+                    m_type = "NMOS"
+
+                    for idx in range(4, len(parts)):
+                        tok = parts[idx]
+                        if tok.upper().startswith('W='):
+                            w_val = cls._parse_value(tok[2:])
+                        elif tok.upper().startswith('L='):
+                            l_val = cls._parse_value(tok[2:])
+                        else:
+                            tok_upper = tok.upper()
+                            if tok_upper in ('NMOS', 'PMOS') or '_NMOS' in tok_upper or '_PMOS' in tok_upper:
+                                spice_model = tok
+                                m_type = tok_upper
+                                break
+
+                    if m_type == 'NMOS' or '_NMOS' in m_type:
+                        circuit.add_component(MOSFET_N(name, parts[1], parts[2], parts[3], w=w_val, l=l_val, model=spice_model or None))
+                    elif m_type == 'PMOS' or '_PMOS' in m_type:
+                        circuit.add_component(MOSFET_P(name, parts[1], parts[2], parts[3], w=w_val, l=l_val, model=spice_model or None))
                     else:
                         logger.warning("Unknown MOSFET type '%s' for %s. Defaulting to NMOS.", m_type, name)
-                        circuit.add_component(MOSFET_N(name, parts[1], parts[2], parts[3], w=w_val, l=l_val))
-                    
+                        circuit.add_component(MOSFET_N(name, parts[1], parts[2], parts[3], w=w_val, l=l_val, model=spice_model or None))
+
                 # 4. Op-Amp Macromodel (E designator in SPICE)
-                # Matches n+ n- nc+ nc- gain
                 elif designator == 'E' and len(parts) >= 5:
                     gain = cls._parse_value(parts[5]) if len(parts) > 5 else 1e5
                     circuit.add_component(OpAmp(name, in_p=parts[3], in_n=parts[4], out=parts[1], gain=gain))
-                    
+
                 # 5. Comparator Model
                 elif designator == 'U' and len(parts) >= 4:
                     v_high = cls._parse_value(parts[4]) if len(parts) > 4 else 5.0
                     v_low = cls._parse_value(parts[5]) if len(parts) > 5 else 0.0
                     circuit.add_component(Comparator(name, parts[1], parts[2], parts[3], v_high, v_low))
-            
+
+                # 6. B-source (behavioral) — skip; LM5085Gate already added in pre-scan
+                elif designator == 'B':
+                    raw_name = base_name[1:]  # strip leading 'B'
+                    if raw_name not in _skip_b:
+                        logger.debug("Unrecognized B-source '%s' — skipped", name)
+
             except Exception as e:
                 logger.warning("Could not load line -> '%s' | Exception: %s", line, str(e))
-                
-        return circuit

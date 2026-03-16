@@ -6,13 +6,94 @@ Obsługuje: Resistor, Capacitor, Inductor, VoltageSource, ACVoltageSource,
 """
 import os
 import logging
+from typing import Callable, Dict, List, Union
 from solver_sch.model.circuit import (
     Circuit, Resistor, Capacitor, Inductor,
     VoltageSource, ACVoltageSource, CurrentSource,
-    Diode, BJT, MOSFET_N, MOSFET_P, OpAmp, Comparator,
+    Diode, _BJTBase, BJT, BJT_N, BJT_P,
+    MOSFET_N, MOSFET_P, OpAmp, Comparator, LM5085Gate,
 )
 
 logger = logging.getLogger(__name__)
+
+# ── Per-component SPICE line formatters ───────────────────────────────────────
+
+def _fmt_resistor(c: Resistor) -> str:
+    return f"R{c.name} {c.node1} {c.node2} {c.resistance}"
+
+def _fmt_capacitor(c: Capacitor) -> str:
+    return f"C{c.name} {c.node1} {c.node2} {c.capacitance}"
+
+def _fmt_inductor(c: Inductor) -> str:
+    return f"L{c.name} {c.node1} {c.node2} {c.inductance}"
+
+def _fmt_vsource(c: VoltageSource) -> str:
+    return f"V{c.name} {c.node1} {c.node2} DC {c.voltage}"
+
+def _fmt_acsource(c: ACVoltageSource) -> str:
+    return (
+        f"V{c.name} {c.node1} {c.node2} "
+        f"SINE({c.dc_offset} {c.amplitude} {c.frequency}) "
+        f"AC {c.ac_mag} {c.ac_phase}"
+    )
+
+def _fmt_isource(c: CurrentSource) -> str:
+    return f"I{c.name} {c.node1} {c.node2} {c.current}"
+
+def _fmt_opamp(c: OpAmp) -> str:
+    return f"E{c.name} {c.out} 0 {c.in_p} {c.in_n} {c.gain}"
+
+def _fmt_diode(c: Diode) -> str:
+    model_name = getattr(c, "model", None) or "D_MODEL"
+    return f"D{c.name} {c.anode} {c.cathode} {model_name}"
+
+def _fmt_bjt(c: "_BJTBase") -> str:
+    default_model = "NPN_MODEL" if isinstance(c, BJT_N) else "PNP_MODEL"
+    model_name = getattr(c, "model", None) or default_model
+    return f"Q{c.name} {c.collector} {c.base} {c.emitter} {model_name}"
+
+def _fmt_mosfet(c: Union[MOSFET_N, MOSFET_P]) -> str:
+    default_model = "NMOS_MODEL" if isinstance(c, MOSFET_N) else "PMOS_MODEL"
+    model_name = getattr(c, "model", None) or default_model
+    w = getattr(c, "w", 1e-6)
+    l = getattr(c, "l", 1e-6)
+    return f"M{c.name} {c.drain} {c.gate} {c.source} {c.source} {model_name} W={w} L={l}"
+
+def _fmt_comparator(c: Comparator) -> str:
+    return (
+        f"B{c.name} {c.node_out} 0 "
+        f"V=if(V({c.node_p})>V({c.node_n}), {c.v_high}, {c.v_low})"
+    )
+
+def _fmt_lm5085(c: LM5085Gate) -> List[str]:
+    vref, vd, k = c.VREF, c.vdrive, c.k
+    return [
+        f"* U6 LM5085SD/NOPB — COT PFET Buck Controller (behavioral DC model)",
+        f"* PGATE: V_pgate = V(vin) - {vd}*sigmoid({k}*(VREF={vref} - V(fb)))",
+        (
+            f"B{c.name}_GATE {c.pgate} {c.gnd} "
+            f"V=V({c.vin})-{vd}*(0.5*(1+tanh({k/2}*({vref}-V({c.fb})))))"
+        ),
+        f"V{c.name}_VCC {c.vcc} {c.gnd} DC {c.VCC_VOLTAGE}",
+    ]
+
+
+_SPICE_FORMATTERS: Dict[type, Callable] = {
+    Resistor:       _fmt_resistor,
+    Capacitor:      _fmt_capacitor,
+    Inductor:       _fmt_inductor,
+    VoltageSource:  _fmt_vsource,
+    ACVoltageSource: _fmt_acsource,
+    CurrentSource:  _fmt_isource,
+    OpAmp:          _fmt_opamp,
+    Diode:          _fmt_diode,
+    BJT_N:          _fmt_bjt,
+    BJT_P:          _fmt_bjt,
+    MOSFET_N:       _fmt_mosfet,
+    MOSFET_P:       _fmt_mosfet,
+    Comparator:     _fmt_comparator,
+    LM5085Gate:     _fmt_lm5085,
+}
 
 
 class LTspiceExporter:
@@ -52,66 +133,13 @@ class LTspiceExporter:
         ]
 
         for comp in circuit.get_components():
-            name = comp.name  # np. "R1", "Vin", "U1"
-
-            if isinstance(comp, Resistor):
-                # SPICE format: R<name> <n+> <n-> <value>
-                lines.append(f"R{name} {comp.node1} {comp.node2} {comp.resistance}")
-
-            elif isinstance(comp, Capacitor):
-                lines.append(f"C{name} {comp.node1} {comp.node2} {comp.capacitance}")
-
-            elif isinstance(comp, Inductor):
-                lines.append(f"L{name} {comp.node1} {comp.node2} {comp.inductance}")
-
-            elif isinstance(comp, VoltageSource):
-                # DC source: V<name> <n+> <n-> <value>
-                lines.append(f"V{name} {comp.node1} {comp.node2} DC {comp.voltage}")
-
-            elif isinstance(comp, ACVoltageSource):
-                # AC stimulus: SINE(offset amp freq) + AC magnitude
-                lines.append(
-                    f"V{name} {comp.node1} {comp.node2} "
-                    f"SINE({comp.dc_offset} {comp.amplitude} {comp.frequency}) "
-                    f"AC {comp.ac_mag} {comp.ac_phase}"
-                )
-
-            elif isinstance(comp, CurrentSource):
-                # DC current source: I<name> <n1> <n2> <value>
-                lines.append(f"I{name} {comp.node1} {comp.node2} {comp.current}")
-
-            elif isinstance(comp, OpAmp):
-                # Modelujemy jako VCVS (E-element): wyjście sterowane napięciem różnicowym
-                # E<name> <out> <gnd> <in+> <in-> <gain>
-                # Węzły OpAmp: in_n=op_inv, in_p=vcc lub 0, out=op_out
-                lines.append(
-                    f"E{name} {comp.out} 0 {comp.in_p} {comp.in_n} {comp.gain}"
-                )
-
-            elif isinstance(comp, Diode):
-                model_name = getattr(comp, "model", None) or "D_MODEL"
-                lines.append(f"D{name} {comp.anode} {comp.cathode} {model_name}")
-
-            elif isinstance(comp, BJT):
-                default_model = "NPN_MODEL" if getattr(comp, 'bjt_type', 'NPN') == 'NPN' else "PNP_MODEL"
-                model_name = getattr(comp, "model", None) or default_model
-                lines.append(
-                    f"Q{name} {comp.collector} {comp.base} {comp.emitter} {model_name}"
-                )
-
-            elif isinstance(comp, (MOSFET_N, MOSFET_P)):
-                default_model = "NMOS_MODEL" if isinstance(comp, MOSFET_N) else "PMOS_MODEL"
-                model_name = getattr(comp, "model", None) or default_model
-                lines.append(
-                    f"M{name} {comp.drain} {comp.gate} {comp.source} {comp.source} {model_name}"
-                )
-
-            elif isinstance(comp, Comparator):
-                # Behavioral voltage source
-                lines.append(
-                    f"B{name} {comp.node_out} 0 "
-                    f"V=if(V({comp.node_p})>V({comp.node_n}), {comp.v_high}, {comp.v_low})"
-                )
+            fmt = _SPICE_FORMATTERS.get(type(comp))
+            if fmt:
+                result = fmt(comp)
+                if isinstance(result, list):
+                    lines.extend(result)
+                else:
+                    lines.append(result)
 
         # ── Model definitions ──────────────────────────────────────
         lines.append("")

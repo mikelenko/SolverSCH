@@ -15,8 +15,9 @@ from typing import Dict, List, Set
 from solver_sch.model.components import (
     Component, TwoTerminalPassive, ThreeTerminalActive,
     ModelCard, Resistor, VoltageSource, CurrentSource, ACVoltageSource,
-    Capacitor, Inductor, Diode, BJT, MOSFET_N, MOSFET_P,
-    OpAmp, Comparator, NMOS, PMOS, NPN,
+    Capacitor, Inductor, Diode, _BJTBase, BJT, BJT_N, BJT_P,
+    MOSFET_N, MOSFET_P,
+    OpAmp, Comparator, NMOS, PMOS, NPN, PNP, LM5085Gate,
 )
 
 __all__ = [
@@ -25,8 +26,9 @@ __all__ = [
     "ModelCard",
     "Resistor", "VoltageSource", "CurrentSource", "ACVoltageSource",
     "Capacitor", "Inductor", "Diode",
-    "BJT", "MOSFET_N", "MOSFET_P", "OpAmp", "Comparator",
-    "NMOS", "PMOS", "NPN",
+    "BJT", "BJT_N", "BJT_P", "_BJTBase",
+    "MOSFET_N", "MOSFET_P", "OpAmp", "Comparator",
+    "NMOS", "PMOS", "NPN", "PNP", "LM5085Gate",
 ]
 
 
@@ -110,6 +112,39 @@ class Circuit:
 
         valid = len(errors) == 0
         return ValidationResult(valid=valid, errors=errors, warnings=warnings)
+
+    def apply_models(self) -> None:
+        """Merge registered ModelCard parameters into component instances."""
+        from solver_sch.parser.netlist_parser import NetlistParser
+
+        models = self._models
+        for comp in self._components:
+            if not (hasattr(comp, "model") and getattr(comp, "model") in models):
+                continue
+            mc = models[comp.model]
+            merged = {k.lower(): v for k, v in mc.parameters.items()}
+            merged.update({k.lower(): v for k, v in getattr(comp, "spice_params", {}).items()})
+
+            def _parse(v):
+                if isinstance(v, str):
+                    try:
+                        return NetlistParser._parse_value(v)
+                    except Exception:
+                        return v
+                return v
+
+            if isinstance(comp, Diode):
+                if "is" in merged: comp.Is = _parse(merged["is"])
+                if "n" in merged: comp.n = _parse(merged["n"])
+                if "bv" in merged: comp.Vz = _parse(merged["bv"])
+            elif isinstance(comp, _BJTBase):
+                if "is" in merged: comp.Is = _parse(merged["is"])
+                if "bf" in merged: comp.Bf = _parse(merged["bf"])
+                if "br" in merged: comp.Br = _parse(merged["br"])
+            elif isinstance(comp, (MOSFET_N, MOSFET_P)):
+                if "vto" in merged: comp.v_th = _parse(merged["vto"])
+                if "kp" in merged: comp.k_p = _parse(merged["kp"])
+                if "lambda" in merged: comp.lambda_ = _parse(merged["lambda"])
 
     def describe(self) -> dict:
         """Return a structured human/LLM-readable description of the circuit."""
