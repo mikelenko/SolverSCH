@@ -321,9 +321,14 @@ class OllamaProvider(LLMProvider):
 
 class StubProvider(LLMProvider):
     """Offline stub provider for testing / development without API keys.
-    
+
     Returns a static valid SPICE netlist so the pipeline can be tested end-to-end.
+    Accepts (and ignores) common kwargs like temperature/model for API compatibility.
     """
+
+    def __init__(self, model: str = "stub", temperature: float = 0.1, **_kwargs) -> None:
+        self.model = model
+        self.temperature = temperature
 
     def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
         logger.info("[StubProvider] Returning canned RC filter netlist.")
