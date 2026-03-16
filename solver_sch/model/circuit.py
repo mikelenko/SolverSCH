@@ -163,12 +163,3 @@ class Circuit:
             ]
         }
 
-    def draw(self, filepath: str) -> bool:
-        """Render the circuit into an SVG schematic using the netlistsvg engine."""
-        from solver_sch.utils.svg_exporter import SVGExporter
-        exporter = SVGExporter(self)
-        try:
-            return exporter.generate(filepath)
-        except Exception as e:
-            print(f"[Circuit Warning] Failed to draw schematic: {e}")
-            return False
