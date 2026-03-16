@@ -118,11 +118,6 @@ def cmd_analyze(args):
     sys.stdout.buffer.flush()
 
 
-def cmd_gui(args):
-    """Opens the PySide6 desktop GUI."""
-    from solver_sch.gui import launch_gui
-    launch_gui(cir_file=getattr(args, "file", "") or "")
-
 
 def cmd_altium_to_spice(args):
     """Parses Altium .NET netlist and BOM to generate SPICE .cir file."""
@@ -219,10 +214,6 @@ def main():
     parser_analyze.add_argument("--intent", default="Analyze this circuit. Use simulate_dc_sweep to determine switching thresholds and voltage levels. Report any design flaws.", help="Opis celu analizy")
     parser_analyze.add_argument("--model", default="gemini-3.1-flash-lite-preview", help="Model Gemini do użycia")
 
-    # Komenda: gui (desktop interface)
-    parser_gui = subparsers.add_parser("gui", help="Otwiera graficzny interfejs użytkownika (PySide6)")
-    parser_gui.add_argument("file", nargs="?", default="", help="Opcjonalna ścieżka do pliku .cir do otwarcia")
-
     # Komenda: chat (interactive multi-turn AI chat)
     parser_chat = subparsers.add_parser("chat", help="Interactive multi-turn AI chat with autonomous simulate_circuit tool")
     parser_chat.add_argument("--provider", "-p", default="ollama",
@@ -257,8 +248,6 @@ def main():
             temperature=args.temperature,
             system_prompt=args.system,
         )
-    elif args.command == "gui":
-        cmd_gui(args)
     elif args.command == "review":
         cmd_review(args)
     elif args.command == "analyze":
