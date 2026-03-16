@@ -4,7 +4,7 @@
 VVDD vd 0 DC 10.0
 VVGG vg 0 DC 5.0
 RRD vd drain 1000.0
-MM1 drain vg 0 0 BS170
+MM1 drain vg 0 0 BS170 W=1e-06 L=1e-06
 
 .model D_MODEL D(Is=1e-14 n=1)
 .model NPN_MODEL NPN(Bf=100 Vaf=50)

@@ -102,3 +102,35 @@ W metodzie ładującej modele nieliniowe do macierzy (`stamp_nonlinear`), nałó
 
 \ n # #   1 3 .   L T s p i c e   F l o a t i n g   N o d e s   i n   I d e a l   O p A m p   M a c r o m o d e l s \ n * * W z o r z e c   b l e d u : * *   L T s p i c e   ( w   w y e k s p o r t o w a n y c h   n e t l i s t a c h )   w y r z u c a   f a t a l   e r r o r   ' s i n g u l a r   m a t r i x '   l u b   p o   p r o s t u   z w r a c a   e x i t   c o d e   1 ,   j e s l i   p i n y   z a s i l a j a c e   ( V C C ,   V S S )   w   . S U B C K T   s a   t y l k o   w z m i a n k o w a n e   w   p o r c i e ,   a l e   n i g d z i e   n i e   p o d l a c z o n e   w   c i e l e   ( n p .   i d e a l n e   E 1   O U T   0   I N _ P   I N _ N   1 0 0 0 0 0 ) .   N a r z e d z i e   \ N e t l i s t P a r s e r \   s t a n d a r d o w o   n i e   k o p i o w a l o   t e z   d y r e k t y w   \ . M O D E L \ ,   c o   p o t e g o w a l o   c r a s h e   L T s p i c e   p r z y   n i e r o z p o z n a n y c h   d i o d a c h   Z e n e r a . \ n * * R o z w i a z a n i e   ( Z a s a d a   z e l a z n a ) : * *   Z a w s z e   d o d a w a j   r e z y s t o r y   ' d u m m y '   ( n p .   1 G   o h m   d o   m a s y )   n a   p i n a c h   z a s i l a j a c y c h   ( V _ P O S ,   V _ N E G )   w e w n a t r z   i d e a l n y c h   \ . S U B C K T \ ,   z e b y   L T s p i c e   w i d z i a l   p o p r a w n a   m a c i e r z   k o n d u k t a n c j i .   P a r s e r   ( \ N e t l i s t P a r s e r \ )   m u s i   z a w s z e   k o p i o w a c   l i n i e   z   \ . M O D E L \   d o   o b i e k t u   o b w o d u   ( j a k o   \ M o d e l C a r d \ ) ,   z e b y   L T s p i c e E x p o r t e r   f i z y c z n i e   u m i e s z c z a l   d e f i n i c j e   m o d e l i   p o l p r z e w o d n i k o w   w   p l i k u   \ . c i r \   d o   s y m u l a c j i .  
  
+## Altium Exporter - Lesson Learned
+- **Opisy Komponent�w (Values)**: Altium NET nie posiada czystych numerycznych warto�ci dla cz�ci. Zamiast tego trzeba u�ywa� skomplikowanego wyra�enia regularnego parsuj�cego pola pokroju `10u/16V X7R`. Odpowiedni system in�ynieryjnych jednostek (*K, M, U, N, P, F, R*) jest krytyczny, szczeg�lnie u�amki angielskie takie jak `1K5` -> 1500, a `0R` musi by� przetwarzane na Gmin (np. 1 miliohm), by unikn�� wyrzucania b��du izolowanego w�z�a/singular matrix.
+- **Uk�ady Scalone (ICs)**: Ze wzgl�du na specyfik� SPICE, skomplikowane uk�ady cyfrowe, mikrokontrolery, pami�ci powinny by� ignorowane we wczesnym etapie przez parser uk�ad�w analogowych, zamiast wstrzymywa� symulacj� na braku modelu.
+- **OpAmpy**: R�czne mapowanie pad�w SOT23-5 dla specyficznych uk�ad�w jak np. LMV321 jest wymagane, poniewa� Altium operuje na identyfikatorach tekstowych (np. 1, 2, 3) zamiast portach IN+, IN-.
+
+- **Ekstrakcja Podobwod�w (Subcircuit Isolation)**: Wyodr�bnienie pojedynczego powielanego sprz�towo bloku z p�askiej netlisty Altium realizowane jest najlepiej przez algorytm grafowy BFS (Breadth-First Search). Przeszukuj�c sie� od pinu docelowego (np. 'Comp_out_A_1'), do��czamy komponenty i ich pozosta�e sieci, zatrzymuj�c algorytm na zdefiniowanych barierach zasilaj�cych (np. GND, +3V3, +5V, VBAT). Zapobiega to przej�ciu algorytmu na ca�y schemat.
+
+## Tool Argument Mismatch and Robustness (2026-03-12)
+**Wzorzec bĹ‚Ä™du:** Agent (LLM) prĂłbuje wywoĹ‚aÄ‡ narzÄ™dzie (np. \query_datasheet\) uĹĽywajÄ…c parametrĂłw o nazwach innych niĹĽ zdefiniowane w schemacie (np. \part_number\ zamiast \component_name\), co powoduje bĹ‚Ä…d \unexpected keyword argument\.
+**RozwiÄ…zanie:**
+1. Dodanie \**kwargs\ do wszystkich funkcji narzÄ™dziowych, aby zapobiec awariom przy nadmiarowych/bĹ‚Ä™dnych parametrach.
+2. Implementacja aliasingu parametrĂłw wewnÄ…trz narzÄ™dzia (np. \component_name = kwargs.get('part_number') or component_name\).
+3. Aktualizacja \ToolRegistry.call\ do obsĹ‚ugi asynchronicznej i ujednoliconego wywoĹ‚ania.
+4. Poprawa opisĂłw w schemacie narzÄ™dzia (prompt), aby sugerowaĹ‚y rĂłĹĽne nazwy (np. 'Part number or component name').
+
+## Topology-Only Review for Unmodeled Components (2026-03-12)
+**Wzorzec bĹ‚Ä™dĂłw:** Dostarczanie agentowi szczÄ…tkowych lub placeholderowych wynikĂłw symulacji (np. 0V na wyjĹ›ciu) dla komponentĂłw bez modeli SPICE moĹĽe wprowadziÄ‡ go w bĹ‚Ä…d i zasugerowaÄ‡ awariÄ™ obwodu, zamiast skupienia siÄ™ na samej topologii.
+**RozwiÄ…zanie:**
+1. W przypadku braku modeli SPICE dla kluczowych ukĹ‚adĂłw, naleĹĽy przekazaÄ‡ agentowi pusty sĹ‚ownik \sim_results\.
+2. W \intent\ naleĹĽy wyraĹşnie zaznaczyÄ‡, ĹĽe analiza ma byÄ‡ topologiczna i oparta na bazach danych (RAG).
+3. Generowanie \component_card\ przed analizÄ… drastycznie poprawia skutecznoĹ›Ä‡ agenta w rozpoznawaniu typĂłw komponentĂłw (np. P-Channel vs N-Channel).
+
+## SPICE MOSFET Parser — Bulk Node vs Model Name (2026-03-13)
+**Wzorzec błędu:** SPICE MOSFET ma format `M<name> drain gate source bulk model`. Parser czytał `parts[4]` (bulk) jako model, zamiast `parts[5]`. Skutek: `SQS411_PMOS` nigdy nie był odczytany — parser widział `NetQ5_1` (bulk) i defaultował do NMOS.
+**Rozwiązanie:** Iteruj po `parts[4:]`, szukaj tokenu który zawiera `NMOS`/`PMOS` (jako suffix lub standalone). Tokeny `W=`/`L=` parsuj oddzielnie. Przekazuj `model=spice_model` do konstruktora zamiast przypisywać post-hoc. Netlist text + `spice_model` w BOM należy przekazywać do agenta żeby miał bezpośredni kontekst.
+
+## Component Card Accuracy and Hallucination Prevention (2026-03-12)
+**Wzorzec bĹ‚Ä™dĂłw:** AI moĹĽe halucynowaÄ‡ architekturÄ™ kontrolera (np. twierdzÄ…c, ĹĽe LM5085 to NFET controller), jeĹ›li \component_card\ jest zbyt ogĂłlny lub bĹ‚Ä™dny, co prowadzi do faĹ‚szywych raportĂłw.
+**RozwiÄ…zanie:**
+1. BezwzglÄ™dnie weryfikuj krytyczne parametry (np. typ FET, napiÄ™cie referencyjne) za pomocÄ… \query_datasheet\ przed poleganiem na automatycznie wygenerowanej karcie.
+2. W przypadku wykrycia bĹ‚Ä™du, rÄ™cznie skoryguj \component_card.json\ i uĹĽyj w \intent\ ostrzeĹĽenia (Capitalized Warning), aby wymusiÄ‡ na modelu uwagÄ™ na konkretny fakt.
+3. Precyzyjne dane w \key_electrical\ (np. 'MOSFET_Type_Required': 'P-Channel') sÄ… najskuteczniejszym sposobem na 'uziemienie' (grounding) modelu.
