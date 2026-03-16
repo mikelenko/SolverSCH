@@ -19,6 +19,7 @@ dependencies = [
 
 [project.scripts]
 solversch = "solver_sch.cli:main"
+solversch-chat = "solver_sch.ai.chat:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["solver_sch"]
