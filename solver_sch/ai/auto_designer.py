@@ -89,10 +89,13 @@ class AutonomousDesigner:
         # Fallback if markdown block is missing
         return ai_response.strip()
 
-    def run_optimization_loop(self, max_iterations: int = 5):
+    def run_optimization_loop(self, max_iterations: int = 5) -> bool:
         """
         Executes the iterative design-evaluate-adjust feedback loop natively.
         Targeting an RC 159Hz (-3dB) filter logic.
+
+        Returns:
+            True if the design converged successfully, False if max iterations were reached.
         """
         logger.info("=== Autonomous Designer Session STARTED ===")
         logger.info("Goal: %s", self.target_goal)
@@ -104,9 +107,15 @@ class AutonomousDesigner:
             logger.debug("[%s Evaluation Mode Activacted]", self.sim_mode)
             logger.info("[Iteration %d/%d] Calling LLM...", iteration, max_iterations)
             
-            # Step 1: Infer LLM Generation
+            # Step 1: Infer LLM Generation — preserve role context so the LLM can
+            # distinguish its own previous responses from user feedback messages.
+            history_text = "\n\n".join(
+                f"[{m['role'].upper()}]\n{m.get('content', '')}"
+                for m in self.conversation_history
+                if m["role"] != "system"
+            )
             ai_text = self._llm.generate(
-                "\n\n".join([m.get("content", "") for m in self.conversation_history]),
+                history_text,
                 system_instruction=self.system_prompt,
             )
             self.conversation_history.append({"role": "assistant", "content": ai_text})
@@ -162,7 +171,7 @@ class AutonomousDesigner:
                         logger.info("--> SUCCESS: AI designed the circuit perfectly!")
                         if self.monte_carlo_runs > 0:
                             self._run_monte_carlo(netlist_str, 'AC')
-                        break
+                        return True
                         
                     # Step 8 (Correction): Deviation Trigger Callback
                     else:
@@ -202,7 +211,7 @@ class AutonomousDesigner:
 
                         if self.monte_carlo_runs > 0:
                             self._run_monte_carlo(netlist_str, 'DC')
-                        break
+                        return True
                     else:
                         if self.target_max_current_ma is not None:
                             v_stat = "PASS" if v_pass else f"FAIL: Target {self.target_dc_voltage}V"
@@ -228,6 +237,7 @@ class AutonomousDesigner:
                 
         else:
             logger.error("=== Session FAILED: Max iterations (%d) reached. ===", max_iterations)
+        return False
 
     def _run_monte_carlo(self, base_netlist: str, mode: str):
         """Runs N Monte Carlo simulations perturbing R and C with 5% Gaussian tolerance."""

@@ -63,7 +63,8 @@ class GeminiProvider(LLMProvider):
 
     def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
         from google.genai import types, errors
-        while True:
+        max_retries = 5
+        for attempt in range(max_retries):
             try:
                 config = types.GenerateContentConfig(temperature=self.temperature)
                 if system_instruction:
@@ -79,7 +80,9 @@ class GeminiProvider(LLMProvider):
                 return response.text
             except errors.ClientError as e:
                 if e.code == 429:
-                    logger.warning("Gemini rate limit hit (429). Retrying in 45s...")
+                    if attempt >= max_retries - 1:
+                        raise
+                    logger.warning("Gemini rate limit hit (429). Retrying %d/%d in 45s...", attempt + 1, max_retries)
                     time.sleep(45)
                 else:
                     raise
@@ -154,19 +157,22 @@ class OllamaProvider(LLMProvider):
     def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
         import urllib.request
         import json
-        full_prompt = f"{system_instruction}\n\n{prompt}" if system_instruction else prompt
+        messages = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.append({"role": "user", "content": prompt})
         payload = json.dumps({
             "model": self.model,
-            "prompt": full_prompt,
+            "messages": messages,
             "stream": False,
             "options": {
                 "temperature": self.temperature
             }
         }).encode()
-        req = urllib.request.Request(f"{self.base_url}/api/generate", data=payload, method="POST",
+        req = urllib.request.Request(f"{self.base_url}/api/chat", data=payload, method="POST",
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read())["response"]
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            return json.loads(resp.read())["message"]["content"]
 
 
 class StubProvider(LLMProvider):

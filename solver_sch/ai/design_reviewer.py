@@ -107,7 +107,7 @@ class DesignReviewAgent:
         ]
         
         options = {
-            "temperature": 0.1, # Lower for better tool consistency
+            "temperature": self.temperature,
             "top_p": 0.9,
             "num_ctx": 4096,
             "num_thread": 6,
@@ -140,14 +140,16 @@ class DesignReviewAgent:
                     
                     # 2. Fallback: Parse Markdown JSON if tool_calls is empty
                     if not tool_calls and "```json" in content:
-                        try:
-                            json_str = content.split("```json")[-1].split("```")[0].strip()
-                            call_data = json.loads(json_str)
-                            if "name" in call_data and "arguments" in call_data:
-                                logger.info("Detected fallback JSON tool call in content.")
-                                tool_calls = [{"function": call_data}]
-                        except Exception as e:
-                            logger.warning(f"Failed to parse fallback JSON tool call: {e}")
+                        for json_block in content.split("```json")[1:]:
+                            raw = json_block.split("```")[0].strip()
+                            try:
+                                call_data = json.loads(raw)
+                                if "name" in call_data and "arguments" in call_data:
+                                    logger.info("Detected fallback JSON tool call in content.")
+                                    tool_calls = [{"function": call_data}]
+                                    break
+                            except Exception as e:
+                                logger.warning(f"Failed to parse fallback JSON block: {e}")
 
                     if tool_calls:
                         logger.info(f"Processing {len(tool_calls)} tool calls.")
@@ -165,13 +167,18 @@ class DesignReviewAgent:
                                     "content": json.dumps(result)
                                 })
                         
-                        # Second Call for final summary
-                        payload["messages"] = messages
+                        # Second Call for final summary — no tools to prevent re-triggering tool loop
+                        final_payload = {
+                            "model": self.model,
+                            "messages": messages,
+                            "stream": False,
+                            "options": options
+                        }
                         logger.info("Sending second request with tool results...")
-                        async with session.post(self.ollama_url, json=payload) as second_response:
+                        async with session.post(self.ollama_url, json=final_payload) as second_response:
                             if second_response.status != 200:
                                 return f"ERROR: Ollama Final API status {second_response.status}"
-                            
+
                             final_data = await second_response.json()
                             return final_data.get("message", {}).get("content", "ERROR: Empty final response.")
                     
