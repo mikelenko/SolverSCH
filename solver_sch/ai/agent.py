@@ -99,14 +99,8 @@ async def run_review(
                     logger.info(f"[PHASE 1] Executing tool: {func_name}")
                     executed_calls.add(call_key)
 
-                    if func_name == "analyze_diagram":
-                        result = await tool_analyze_diagram(**args)
-                    elif func_name == "query_datasheet":
-                        result = await tool_query_datasheet(**args)
-                    elif func_name in registry._tools:
-                        result = registry._tools[func_name]["func"](**args)
-                    else:
-                        result = {"error": f"Tool '{func_name}' not found"}
+                    # Unified tool call via registry
+                    result = await registry.call(func_name, args)
 
                     if isinstance(result, dict) and "error" in result:
                         had_error = True

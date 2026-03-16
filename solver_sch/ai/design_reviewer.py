@@ -121,6 +121,7 @@ class DesignReviewAgent:
 
     def _load_component_cards(self, circuit_info: Dict[str, Any]) -> Dict[str, Any]:
         """Load .card.json files for ICs found in the BOM."""
+        import re
         if not os.path.isdir(DATASHEETS_DIR):
             return {}
 
@@ -135,6 +136,11 @@ class DesignReviewAgent:
             if "_" in ref:
                 candidates.add(ref.split("_", 1)[1].lower())
             candidates.add(ref.lower())
+            # Also check spice_model — strip known suffixes (_PMOS, _NMOS, _NPN, _PNP, _BJT, _ALTIUM)
+            spice_model: str = entry.get("spice_model", "")
+            if spice_model:
+                base = re.sub(r'[_](PMOS|NMOS|NPN|PNP|BJT|ALTIUM)$', '', spice_model, flags=re.IGNORECASE)
+                candidates.add(base.lower())
 
         cards: Dict[str, Any] = {}
         for fname in os.listdir(DATASHEETS_DIR):
@@ -158,13 +164,16 @@ class DesignReviewAgent:
         cards = self._load_component_cards(circuit_info)
         cards_section = self._safe_json(cards, indent=2) if cards else "No datasheets indexed."
 
+        netlist_text: str = circuit_info.pop("netlist_text", "") or ""
+        netlist_section = f"\n### SPICE NETLIST (raw)\n```spice\n{netlist_text}\n```" if netlist_text else ""
+
         return f"""
 ### TASK DESCRIPTION
 {task_intent}
 
 ### CIRCUIT BOM
 {self._safe_json(circuit_info, indent=2)}
-
+{netlist_section}
 ### COMPONENT DATASHEETS (summaries — use query_datasheet tool for details)
 {cards_section}
 
