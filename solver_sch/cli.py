@@ -223,6 +223,9 @@ def main():
     parser_chat.add_argument("--temperature", "-t", type=float, default=0.7, help="Sampling temperature (default: 0.7)")
     parser_chat.add_argument("--system", "-s", default=None, help="Custom system prompt (overrides built-in tool prompt)")
 
+    # Komenda: chat-gui (desktop agent chat window)
+    subparsers.add_parser("chat-gui", help="Open desktop agent chat window (PySide6 + Anthropic)")
+
     # Komenda: altium-to-spice
     parser_a2s = subparsers.add_parser("altium-to-spice", help="Konwertuje pliki Altium (.NET, .xls BOM) na format SPICE (.cir)")
     parser_a2s.add_argument("--netlist", required=True, help="Ścieżka do pliku .NET (Altium Netlist)")
@@ -248,6 +251,9 @@ def main():
             temperature=args.temperature,
             system_prompt=args.system,
         )
+    elif args.command == "chat-gui":
+        from solver_sch.ai.chat_window import main as _chat_gui_main
+        _chat_gui_main()
     elif args.command == "review":
         cmd_review(args)
     elif args.command == "analyze":
